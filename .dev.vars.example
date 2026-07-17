@@ -1,0 +1,4 @@
+# Local development uses AUTH_MODE=dev by default through wrangler --var.
+# For Cloudflare Access validation, configure these as Wrangler vars or secrets.
+ACCESS_TEAM_DOMAIN=your-team.cloudflareaccess.com
+ACCESS_AUD=your-access-application-aud

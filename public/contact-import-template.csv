@@ -1,0 +1,2 @@
+first_name,last_name,job_title,email,phone,organization,lifecycle_stage,source,tags
+Jane,Doe,Commercial Director,jane@example.com,+31 20 555 0100,Example Company,qualified,Referral,"priority,europe"

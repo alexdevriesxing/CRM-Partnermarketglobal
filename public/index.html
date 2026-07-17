@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="description" content="PartnerMarket Global relationship CRM for contacts, organizations, pipeline, follow-ups and commercial analytics.">
+  <title>PartnerMarket Global CRM</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">PM</div>
+        <div>
+          <strong>PartnerMarket</strong>
+          <span>Global CRM</span>
+        </div>
+      </div>
+
+      <nav class="nav-list">
+        <a href="#dashboard" data-route="dashboard" class="nav-item active"><span class="nav-icon">⌂</span><span>Dashboard</span></a>
+        <a href="#contacts" data-route="contacts" class="nav-item"><span class="nav-icon">◎</span><span>Contacts</span><span class="nav-count" id="contactNavCount">0</span></a>
+        <a href="#organizations" data-route="organizations" class="nav-item"><span class="nav-icon">▦</span><span>Organizations</span></a>
+        <a href="#pipeline" data-route="pipeline" class="nav-item"><span class="nav-icon">↗</span><span>Pipeline</span></a>
+        <a href="#tasks" data-route="tasks" class="nav-item"><span class="nav-icon">✓</span><span>Tasks</span><span class="nav-count alert" id="taskNavCount">0</span></a>
+        <a href="#analytics" data-route="analytics" class="nav-item"><span class="nav-icon">◫</span><span>Analytics</span></a>
+      </nav>
+
+      <div class="sidebar-label">Workspace</div>
+      <nav class="nav-list compact">
+        <a href="#data" data-route="data" class="nav-item"><span class="nav-icon">⇅</span><span>Import & export</span></a>
+        <a href="#settings" data-route="settings" class="nav-item"><span class="nav-icon">⚙</span><span>Settings</span></a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="workspace-card">
+          <span class="workspace-status"></span>
+          <div><strong>Cloudflare edge</strong><span>D1 · R2 · KV · Queues</span></div>
+        </div>
+        <button class="user-card" id="userMenuButton" type="button">
+          <span class="avatar" id="userAvatar">AD</span>
+          <span class="user-copy"><strong id="userName">Loading…</strong><small id="userRole">Connecting</small></span>
+          <span>⋯</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="main-column">
+      <header class="topbar">
+        <button class="icon-button mobile-only" id="menuButton" type="button" aria-label="Open navigation">☰</button>
+        <div class="global-search-wrap">
+          <span class="search-icon">⌕</span>
+          <input id="globalSearch" type="search" placeholder="Search contacts, companies and deals…" autocomplete="off">
+          <kbd>⌘ K</kbd>
+          <div class="search-results" id="searchResults" hidden></div>
+        </div>
+        <div class="topbar-actions">
+          <button class="icon-button" id="themeButton" type="button" aria-label="Toggle color theme">◐</button>
+          <button class="icon-button notification-button" type="button" aria-label="Notifications">♢<span></span></button>
+          <button class="button primary" id="quickAddButton" type="button"><span>＋</span> Quick add</button>
+        </div>
+      </header>
+
+      <main class="content" id="content" tabindex="-1">
+        <section class="page active" data-page="dashboard" id="dashboardPage">
+          <div class="page-heading">
+            <div><p class="eyebrow">Relationship command center</p><h1>Good evening, <span id="greetingName">Alex</span></h1><p>Here is what needs attention across your network.</p></div>
+            <div class="heading-actions"><button class="button secondary" data-action="export-contacts" type="button">Export report</button><button class="button primary" data-action="log-activity" type="button">Log interaction</button></div>
+          </div>
+
+          <div class="metric-grid" id="dashboardMetrics"></div>
+
+          <div class="dashboard-grid two-one">
+            <article class="panel chart-panel">
+              <div class="panel-heading"><div><h2>Relationship activity</h2><p>Interactions recorded over the past 14 days</p></div><span class="trend positive" id="activityTrend">Live</span></div>
+              <div class="activity-chart" id="activityChart" aria-label="Activity chart"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><h2>Relationship health</h2><p>Health distribution across active contacts</p></div></div>
+              <div class="donut-layout"><div class="donut" id="healthDonut"><div><strong id="healthAverage">0</strong><span>avg score</span></div></div><div class="legend-list" id="healthLegend"></div></div>
+            </article>
+          </div>
+
+          <div class="dashboard-grid equal">
+            <article class="panel">
+              <div class="panel-heading"><div><h2>Pipeline overview</h2><p>Active opportunities by commercial stage</p></div><button class="text-button" data-route-jump="pipeline" type="button">View pipeline →</button></div>
+              <div id="pipelineSummary" class="pipeline-summary"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><h2>Priority follow-ups</h2><p>Tasks ranked by urgency and due date</p></div><button class="text-button" data-route-jump="tasks" type="button">All tasks →</button></div>
+              <div class="task-list" id="priorityTasks"></div>
+            </article>
+          </div>
+
+          <article class="panel">
+            <div class="panel-heading"><div><h2>Recent relationship history</h2><p>A unified timeline of conversations, notes and meetings</p></div><button class="text-button" data-action="log-activity" type="button">Add interaction +</button></div>
+            <div class="timeline" id="recentTimeline"></div>
+          </article>
+        </section>
+
+        <section class="page" data-page="contacts" id="contactsPage">
+          <div class="page-heading">
+            <div><p class="eyebrow">Relationship database</p><h1>Contacts</h1><p>Every decision-maker, conversation and next step in one place.</p></div>
+            <div class="heading-actions"><button class="button secondary" data-action="import-contacts" type="button">Import CSV</button><button class="button primary" data-action="new-contact" type="button">＋ Add contact</button></div>
+          </div>
+          <div class="toolbar panel-lite">
+            <div class="filter-search"><span>⌕</span><input id="contactSearch" type="search" placeholder="Search name, email, title or company"></div>
+            <select id="contactStageFilter" aria-label="Lifecycle stage"><option value="">All stages</option><option value="lead">Lead</option><option value="qualified">Qualified</option><option value="opportunity">Opportunity</option><option value="customer">Customer</option><option value="partner">Partner</option><option value="inactive">Inactive</option></select>
+            <select id="contactSort" aria-label="Sort contacts"><option value="last_contact">Recent contact</option><option value="score">Relationship score</option><option value="name">Name</option><option value="organization">Organization</option><option value="follow_up">Follow-up date</option></select>
+            <button class="icon-button" id="contactRefresh" type="button" aria-label="Refresh contacts">↻</button>
+          </div>
+          <div class="selection-bar" id="selectionBar" hidden><strong><span id="selectionCount">0</span> selected</strong><button class="text-button" type="button">Add tag</button><button class="text-button" type="button">Assign owner</button><button class="text-button danger" type="button">Archive</button></div>
+          <div class="table-panel">
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th><input type="checkbox" id="selectAllContacts" aria-label="Select all contacts"></th><th>Contact</th><th>Organization</th><th>Stage</th><th>Last contact</th><th>Next step</th><th>Health</th><th></th></tr></thead>
+                <tbody id="contactsTableBody"></tbody>
+              </table>
+            </div>
+            <div class="pagination" id="contactsPagination"></div>
+          </div>
+        </section>
+
+        <section class="page" data-page="organizations" id="organizationsPage">
+          <div class="page-heading"><div><p class="eyebrow">Account intelligence</p><h1>Organizations</h1><p>Companies, investors, partners, clients and commercial context.</p></div><div class="heading-actions"><button class="button primary" data-action="new-organization" type="button">＋ Add organization</button></div></div>
+          <div class="toolbar panel-lite"><div class="filter-search"><span>⌕</span><input id="organizationSearch" type="search" placeholder="Search organizations"></div><select id="organizationTypeFilter"><option value="">All types</option><option value="prospect">Prospect</option><option value="client">Client</option><option value="partner">Partner</option><option value="investor">Investor</option><option value="supplier">Supplier</option></select></div>
+          <div class="card-grid" id="organizationGrid"></div>
+        </section>
+
+        <section class="page" data-page="pipeline" id="pipelinePage">
+          <div class="page-heading"><div><p class="eyebrow">Commercial pipeline</p><h1>Deals</h1><p>Move opportunities forward and keep forecast risk visible.</p></div><div class="heading-actions"><button class="button primary" data-action="new-deal" type="button">＋ New deal</button></div></div>
+          <div class="metric-grid compact" id="pipelineMetrics"></div>
+          <div class="kanban" id="pipelineBoard"></div>
+        </section>
+
+        <section class="page" data-page="tasks" id="tasksPage">
+          <div class="page-heading"><div><p class="eyebrow">Execution</p><h1>Tasks & follow-ups</h1><p>Keep every commitment visible, owned and on time.</p></div><div class="heading-actions"><button class="button primary" data-action="new-task" type="button">＋ Add task</button></div></div>
+          <div class="task-tabs" id="taskTabs"><button class="active" data-task-status="">All</button><button data-task-status="open">Open</button><button data-task-status="in_progress">In progress</button><button data-task-status="completed">Completed</button></div>
+          <div class="panel task-workspace"><div class="task-board" id="taskBoard"></div></div>
+        </section>
+
+        <section class="page" data-page="analytics" id="analyticsPage">
+          <div class="page-heading"><div><p class="eyebrow">Performance intelligence</p><h1>Analytics</h1><p>Understand engagement, conversion, team output and revenue momentum.</p></div><div class="heading-actions"><select id="analyticsRange"><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="180">Last 6 months</option><option value="365">Last year</option></select></div></div>
+          <div class="metric-grid" id="analyticsMetrics"></div>
+          <div class="dashboard-grid equal">
+            <article class="panel"><div class="panel-heading"><div><h2>Activity mix</h2><p>How your team engages the network</p></div></div><div class="horizontal-bars" id="activityMix"></div></article>
+            <article class="panel"><div class="panel-heading"><div><h2>Contact lifecycle</h2><p>Distribution across relationship stages</p></div></div><div class="funnel" id="lifecycleFunnel"></div></article>
+          </div>
+          <article class="panel"><div class="panel-heading"><div><h2>Owner performance</h2><p>Relationship activity, portfolio coverage and won value</p></div></div><div class="table-scroll"><table><thead><tr><th>Owner</th><th>Activities</th><th>Contacts</th><th>Won value</th><th>Momentum</th></tr></thead><tbody id="ownerPerformanceBody"></tbody></table></div></article>
+        </section>
+
+        <section class="page" data-page="data" id="dataPage">
+          <div class="page-heading"><div><p class="eyebrow">Data operations</p><h1>Import & export</h1><p>Move relationship data safely between systems.</p></div></div>
+          <div class="dashboard-grid equal">
+            <article class="panel action-panel"><div class="action-icon">⇧</div><h2>Import contacts</h2><p>Upload a CSV with names, email, phone, company, title, stage, source and tags. Existing email addresses remain unique.</p><button class="button primary" data-action="import-contacts" type="button">Choose CSV file</button><a class="text-button" href="/contact-import-template.csv" download>Download template</a></article>
+            <article class="panel action-panel"><div class="action-icon">⇩</div><h2>Export database</h2><p>Download current contact records as CSV for reporting, backup or enrichment.</p><button class="button secondary" data-action="export-contacts" type="button">Export contacts</button></article>
+          </div>
+          <article class="panel"><div class="panel-heading"><div><h2>Data model</h2><p>Cloudflare-native storage and processing architecture</p></div></div><div class="architecture-grid"><div><strong>D1</strong><span>Contacts, companies, deals, tasks, history and audit logs</span></div><div><strong>R2</strong><span>Contracts, decks, correspondence and other files</span></div><div><strong>KV</strong><span>Fast search and dashboard cache, rate limits and Access keys</span></div><div><strong>Queues</strong><span>Asynchronous activity processing and cache invalidation</span></div><div><strong>Analytics Engine</strong><span>High-cardinality product and usage telemetry</span></div><div><strong>Workers</strong><span>Global API, authentication, scheduled jobs and static app</span></div></div></article>
+        </section>
+
+        <section class="page" data-page="settings" id="settingsPage">
+          <div class="page-heading"><div><p class="eyebrow">Administration</p><h1>Settings</h1><p>Workspace identity, security and relationship scoring preferences.</p></div></div>
+          <div class="settings-layout">
+            <nav class="settings-nav"><button class="active">Workspace</button><button>Team & roles</button><button>Security</button><button>Custom fields</button><button>Scoring</button></nav>
+            <article class="panel settings-panel"><h2>Workspace profile</h2><p>These values identify the CRM in team notifications and exports.</p><div class="form-grid"><label>Workspace name<input value="PartnerMarket Global CRM"></label><label>Default currency<select><option>EUR</option><option>USD</option><option>GBP</option><option>SGD</option><option>IDR</option></select></label><label>Default timezone<select><option>Europe/Amsterdam</option><option>Asia/Jakarta</option><option>Asia/Singapore</option></select></label><label>Week starts<select><option>Monday</option><option>Sunday</option></select></label></div><hr><h2>Cloudflare Access</h2><p>Production authentication is enforced at the Worker API using the Access JWT assertion. Roles are maintained in D1.</p><div class="security-status"><span>✓</span><div><strong>Access-ready</strong><small>Set ACCESS_TEAM_DOMAIN and ACCESS_AUD before production deploy.</small></div></div><button class="button primary" type="button" disabled>Save settings</button></article>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+  <aside class="detail-drawer" id="detailDrawer" aria-label="Contact details" aria-hidden="true"></aside>
+  <div class="modal-backdrop" id="modalBackdrop" hidden></div>
+  <section class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" hidden></section>
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+  <input id="csvFileInput" type="file" accept=".csv,text/csv" hidden>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
