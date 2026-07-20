@@ -1,62 +1,47 @@
-name: Assemble CRM V2
+name: Materialize CRM V2 Source
 
 on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-  issues:
-    types: [opened]
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: write
 
 jobs:
-  assemble:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run' || (github.event_name == 'issues' && github.event.issue.title == '[assemble-v2] Run CRM V2 assembly') || github.event.pull_request.head.ref == 'agent/polish-comprehensive-crm'
+  materialize:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: agent/polish-comprehensive-crm
+          ref: main
           fetch-depth: 0
-      - name: Check package state
-        id: package
+      - name: Check source package
+        id: source
         run: |
           if [ -f .v2-package/READY ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "CRM V2 is already assembled."
+            echo "CRM V2 source is already materialized."
           fi
-      - name: Assemble and verify package
-        if: steps.package.outputs.ready == 'true'
-        run: |
-          cat .v2-package/part-* > /tmp/pmg-crm-v2.b64
-          base64 --decode /tmp/pmg-crm-v2.b64 > /tmp/pmg-crm-v2.tar.gz
-          echo "230b6b705afdb069b471f48e6f8054d11ebb5cfa708ba322ec9ccfe3f53e97d7  /tmp/pmg-crm-v2.tar.gz" | sha256sum --check
-          tar -xzf /tmp/pmg-crm-v2.tar.gz
-          rm -f tests/integration.test.mjs .placeholder
-          rm -rf .v2-package .github/workflows/assemble-v2.yml
       - uses: actions/setup-node@v4
-        if: steps.package.outputs.ready == 'true'
+        if: steps.source.outputs.ready == 'true'
         with:
           node-version: 22
-      - name: Validate CRM V2
-        if: steps.package.outputs.ready == 'true'
+      - name: Materialize and validate CRM V2
+        if: steps.source.outputs.ready == 'true'
         run: |
-          npm install
+          node scripts/materialize-v2.mjs
+          rm -f tests/integration.test.mjs .placeholder
+          rm -rf .v2-package scripts/materialize-v2.mjs .github/workflows/assemble-v2.yml
+          npm install --ignore-scripts
           npm run validate
-      - name: Commit assembled source
-        if: steps.package.outputs.ready == 'true'
+      - name: Commit clean source
+        if: steps.source.outputs.ready == 'true'
         run: |
           git config user.name "OpenAI Codex"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Polish and expand comprehensive CRM V2"
-          git push origin agent/polish-comprehensive-crm
+          git commit -m "Materialize clean CRM V2 source"
+          git push origin main
