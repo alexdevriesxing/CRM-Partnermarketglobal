@@ -1,23 +1,33 @@
 name: Assemble CRM V2
 
 on:
-  push:
-    branches: [agent/polish-comprehensive-crm]
-    paths:
-      - '.v2-package/READY'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
 
 jobs:
   assemble:
+    if: github.event.pull_request.head.ref == 'agent/polish-comprehensive-crm'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: agent/polish-comprehensive-crm
           fetch-depth: 0
+      - name: Check package state
+        id: package
+        run: |
+          if [ -f .v2-package/READY ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "CRM V2 is already assembled."
+          fi
       - name: Assemble and verify package
+        if: steps.package.outputs.ready == 'true'
         run: |
           cat .v2-package/part-* > /tmp/pmg-crm-v2.b64
           base64 --decode /tmp/pmg-crm-v2.b64 > /tmp/pmg-crm-v2.tar.gz
@@ -26,13 +36,16 @@ jobs:
           rm -f tests/integration.test.mjs .placeholder
           rm -rf .v2-package .github/workflows/assemble-v2.yml
       - uses: actions/setup-node@v4
+        if: steps.package.outputs.ready == 'true'
         with:
           node-version: 22
       - name: Validate CRM V2
+        if: steps.package.outputs.ready == 'true'
         run: |
           npm install
           npm run validate
       - name: Commit assembled source
+        if: steps.package.outputs.ready == 'true'
         run: |
           git config user.name "OpenAI Codex"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
