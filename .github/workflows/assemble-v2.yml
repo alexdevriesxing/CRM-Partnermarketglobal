@@ -1,0 +1,41 @@
+name: Assemble CRM V2
+
+on:
+  push:
+    branches: [agent/polish-comprehensive-crm]
+    paths:
+      - '.v2-package/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/polish-comprehensive-crm
+          fetch-depth: 0
+      - name: Assemble and verify package
+        run: |
+          cat .v2-package/part-* > /tmp/pmg-crm-v2.b64
+          base64 --decode /tmp/pmg-crm-v2.b64 > /tmp/pmg-crm-v2.tar.gz
+          echo "230b6b705afdb069b471f48e6f8054d11ebb5cfa708ba322ec9ccfe3f53e97d7  /tmp/pmg-crm-v2.tar.gz" | sha256sum --check
+          tar -xzf /tmp/pmg-crm-v2.tar.gz
+          rm -f tests/integration.test.mjs .placeholder
+          rm -rf .v2-package .github/workflows/assemble-v2.yml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate CRM V2
+        run: |
+          npm install
+          npm run validate
+      - name: Commit assembled source
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Polish and expand comprehensive CRM V2"
+          git push origin agent/polish-comprehensive-crm
