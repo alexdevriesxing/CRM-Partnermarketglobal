@@ -7,6 +7,8 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
+  issues:
+    types: [opened]
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -16,7 +18,7 @@ permissions:
 
 jobs:
   assemble:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run' || github.event.pull_request.head.ref == 'agent/polish-comprehensive-crm'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run' || (github.event_name == 'issues' && github.event.issue.title == '[assemble-v2] Run CRM V2 assembly') || github.event.pull_request.head.ref == 'agent/polish-comprehensive-crm'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
