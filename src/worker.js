@@ -10,6 +10,7 @@ import {
   slugify,
   toIsoDate,
 } from './lib/domain.js';
+import { createEmailSender, listEmailMessages, listEmailSenders, sendCrmEmail, updateEmailSender } from './email.js';
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
 const SECURITY_HEADERS = {
@@ -474,11 +475,16 @@ async function handleApi(request,env){const user=await currentUser(request,env);
   if(p[1]==='exports'&&p[2]==='contacts'&&method==='GET')return exportContacts(env,ctx);
   if(p[1]==='attachments'&&!p[2]&&method==='POST')return json(await uploadAttachment(env,ctx,request),201);
   if(p[1]==='attachments'&&p[2]&&method==='GET')return downloadAttachment(env,ctx,p[2]);
+  if(p[1]==='email'&&p[2]==='senders'&&!p[3]&&method==='GET')return json(await listEmailSenders(env,ctx));
+  if(p[1]==='email'&&p[2]==='senders'&&!p[3]&&method==='POST')return json(await createEmailSender(env,ctx,request),201);
+  if(p[1]==='email'&&p[2]==='senders'&&p[3]&&method==='PATCH')return json(await updateEmailSender(env,ctx,request,p[3]));
+  if(p[1]==='email'&&p[2]==='messages'&&method==='GET')return json(await listEmailMessages(env,ctx,request));
+  if(p[1]==='email'&&p[2]==='send'&&method==='POST')return json(await sendCrmEmail(env,ctx,request),201);
   return error('API route not found',404);
 }
 
 export default {
-  async fetch(request,env,executionContext){try{const url=new URL(request.url);if(url.pathname==='/health')return json({ok:true,service:'partnermarket-global-crm',version:'2.0.0',timestamp:nowIso()});if(url.pathname.startsWith('/api/'))return await handleApi(request,env);const response=await env.ASSETS.fetch(request);const headers=new Headers(response.headers);for(const [key,value] of Object.entries(SECURITY_HEADERS))headers.set(key,value);return new Response(response.body,{status:response.status,statusText:response.statusText,headers});}catch(err){console.error(err);return error(err.message||'Unexpected server error',err.status||500);}},
+  async fetch(request,env,executionContext){try{const url=new URL(request.url);if(url.pathname==='/health')return json({ok:true,service:'partnermarket-global-crm',version:'2.1.0',timestamp:nowIso()});if(url.pathname.startsWith('/api/'))return await handleApi(request,env);const response=await env.ASSETS.fetch(request);const headers=new Headers(response.headers);for(const [key,value] of Object.entries(SECURITY_HEADERS))headers.set(key,value);return new Response(response.body,{status:response.status,statusText:response.statusText,headers});}catch(err){console.error(err);return error(err.message||'Unexpected server error',err.status||500);}},
   async queue(batch,env){for(const message of batch.messages){try{if(message.body?.type==='recalculate_contact')await recalculateContact(env,message.body.workspace_id,message.body.contact_id);message.ack();}catch(err){console.error('Queue processing failed',err);message.retry();}}},
   async scheduled(_event,env,ctx){ctx.waitUntil((async()=>{const rows=await env.DB.prepare("SELECT id,workspace_id FROM contacts WHERE status='active'").all();for(const row of rows.results||[])await recalculateContact(env,row.workspace_id,row.id);await env.DB.prepare("UPDATE follow_ups SET status='open',snoozed_until=NULL,updated_at=CURRENT_TIMESTAMP WHERE status='snoozed' AND snoozed_until<=datetime('now')").run();})());},
 };
