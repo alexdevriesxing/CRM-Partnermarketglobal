@@ -1,6 +1,6 @@
 {
   "name": "partnermarket-global-crm",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "private": true,
   "type": "module",
   "description": "Cloudflare-native multi-workspace relationship CRM with integrated business email",
@@ -8,7 +8,7 @@
     "dev": "wrangler dev --var AUTH_MODE:dev --var ENVIRONMENT:development",
     "dev:mock": "node scripts/dev-server.mjs",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check src/worker.js && node --check src/email.js && node --check src/email-worker.js && node --check src/lib/domain.js && node --check src/lib/email.js && node --check public/app.js && node --check public/email.js && node --check scripts/dev-server.mjs && node --check scripts/preflight-production.mjs",
+    "check": "node --check src/worker.js && node --check src/email.js && node --check src/email-worker.js && node --check src/intelligence.js && node --check src/lib/domain.js && node --check src/lib/email.js && node --check public/app.js && node --check public/email.js && node --check public/intelligence.js && node --check scripts/dev-server.mjs && node --check scripts/preflight-production.mjs",
     "validate": "npm run check && npm test",
     "deploy": "wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply partnermarket-crm-db --local",

@@ -86,10 +86,10 @@ async function loadReferenceData(){
 function renderFatal(error){$('#content').innerHTML=`<section class="panel" style="max-width:760px;margin:50px auto"><div class="panel-body"><p class="eyebrow">Connection required</p><h1>CRM API could not be reached</h1><p>${escapeHtml(error.message)}</p><div class="callout"><strong>Local preview</strong>Run <code>npm run dev:mock</code> and open <code>http://localhost:8787</code>.</div></div></section>`;}
 
 function navigate(route){
-  const known=['dashboard','agenda','contacts','organizations','activity','email','pipeline','tasks','analytics','data','settings'];
+  const known=['dashboard','agenda','contacts','organizations','activity','email','pipeline','tasks','analytics','intelligence','data','settings'];
   state.route=known.includes(route)?route:'dashboard';
   if(location.hash!==`#${state.route}`)history.replaceState(null,'',`#${state.route}`);
-  const routeTitles={dashboard:'Dashboard',agenda:'My Day',contacts:'Contacts',organizations:'Accounts',activity:'Contact Log',email:'Email Center',pipeline:'Pipeline',tasks:'Tasks',analytics:'Analytics',data:'Import & export',settings:'Settings'};
+  const routeTitles={dashboard:'Dashboard',agenda:'My Day',contacts:'Contacts',organizations:'Accounts',activity:'Contact Log',email:'Email Center',pipeline:'Pipeline',tasks:'Tasks',analytics:'Analytics',intelligence:'Commercial Intelligence',data:'Import & export',settings:'Settings'};
   $('.nav-item[data-route]').forEach((item)=>{const active=item.dataset.route===state.route;item.classList.toggle('active',active);if(active)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current');});
   document.title=`${routeTitles[state.route]||'CRM'} · PartnerMarket Global CRM`;
   $('#sidebar').classList.remove('open');$('#content').focus({preventScroll:true});renderRoute();
@@ -106,6 +106,7 @@ async function renderRoute(){
     else if(state.route==='email'){const {renderEmailCenter}=await import('/email.js');await renderEmailCenter($('#content'));}
     else if(state.route==='tasks')await renderTasks();
     else if(state.route==='analytics')await renderAnalytics();
+    else if(state.route==='intelligence'){const {renderCommercialIntelligence}=await import('/intelligence.js');await renderCommercialIntelligence($('#content'));}
     else if(state.route==='data')renderData();
     else if(state.route==='settings')renderSettings();
   }catch(error){$('#content').innerHTML=empty('Unable to load this page',error.message,`<button class="button secondary" data-retry>Try again</button>`);toast('Unable to load',error.message,'error');}

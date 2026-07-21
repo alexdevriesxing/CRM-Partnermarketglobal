@@ -47,7 +47,7 @@ export async function getCommercialIntelligence(env, ctx, request) {
   const workspaceId = ctx.workspace.id;
   const days = daysWindow(request);
   const scope = accountScope(url, 'd');
-  const organizationScope = accountScope(url, 'o');
+  const organizationScope = { accountId: scope.accountId, clause: scope.accountId ? ' AND o.id=?' : '', bindings: scope.accountId ? [scope.accountId] : [] };
 
   if (scope.accountId) {
     const account = await env.DB.prepare('SELECT id FROM organizations WHERE id=? AND workspace_id=?').bind(scope.accountId, workspaceId).first();
