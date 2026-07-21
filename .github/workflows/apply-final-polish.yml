@@ -5,6 +5,9 @@ on:
     branches: [agent/final-polish]
     paths:
       - '.final-polish-trigger'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -12,6 +15,7 @@ permissions:
 
 jobs:
   polish:
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/final-polish'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
