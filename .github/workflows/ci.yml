@@ -57,9 +57,6 @@ jobs:
           rm -rf .v2-package scripts/materialize-v2.mjs .github/workflows/assemble-v2.yml
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "failed=false" >> "$GITHUB_OUTPUT"
-      - name: Install dependencies
-        if: steps.materialize.outputs.failed != 'true'
-        run: npm install --ignore-scripts
       - name: Validate CRM
         if: steps.materialize.outputs.failed != 'true'
         run: npm run validate
