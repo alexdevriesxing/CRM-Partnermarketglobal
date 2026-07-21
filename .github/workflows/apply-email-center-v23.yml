@@ -22,7 +22,9 @@ jobs:
         with:
           node-version: 22
       - name: Apply Email Center pass
-        run: node scripts/apply-email-center-v23.mjs
+        run: |
+          node scripts/apply-email-center-v23.mjs
+          node scripts/fix-email-center-v23.mjs
       - name: Validate full repository
         id: validate
         shell: bash
