@@ -5,6 +5,9 @@ on:
     branches: [agent/email-composer]
     paths:
       - '.email-composer-trigger'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -12,6 +15,7 @@ permissions:
 
 jobs:
   integrate:
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/email-composer'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
