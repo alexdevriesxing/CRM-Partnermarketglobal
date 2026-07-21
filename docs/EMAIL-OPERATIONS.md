@@ -79,3 +79,18 @@ Monthly:
 - Review DMARC reports and authentication alignment.
 - Export or archive old email activity according to the business retention policy.
 - Confirm D1, KV, R2, Access, and service-binding configuration has no placeholders or stale resources.
+
+## Email Center
+
+The CRM navigation now includes a first-class Email Center. It provides:
+
+- private Email Worker and provider-binding health status;
+- sent, failed, queued, recipient, delivery-rate and attachment metrics;
+- 14, 30 and 90-day delivery volume views;
+- sender-identity performance by approved business domain;
+- searchable history filtered by CRM account, status and sender;
+- recent failure diagnostics;
+- CSV export and message reuse;
+- recoverable browser-draft visibility and direct compose actions.
+
+The Email Center uses the same workspace and account context as the rest of the CRM. Its health endpoint exposes configuration state only and does not disclose Cloudflare credentials or message content.

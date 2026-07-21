@@ -1,6 +1,6 @@
 {
   "name": "partnermarket-global-crm",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "type": "module",
   "description": "Cloudflare-native multi-workspace relationship CRM with integrated business email",

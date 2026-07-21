@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <a class="skip-link" href="#content">Skip to CRM content</a>
   <div class="app-shell" id="appShell">
     <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
       <div class="brand-row">
@@ -30,6 +31,7 @@
         <button class="nav-item" data-route="contacts"><span>◎</span><b>Contacts</b><em id="contactCount"></em></button>
         <button class="nav-item" data-route="organizations"><span>▦</span><b>Accounts</b></button>
         <button class="nav-item" data-route="activity"><span>↗</span><b>Contact Log</b></button>
+        <button class="nav-item" data-route="email"><span>✉</span><b>Email Center</b><em id="emailFailureCount"></em></button>
         <button class="nav-item" data-route="pipeline"><span>◫</span><b>Pipeline</b></button>
         <button class="nav-item" data-route="tasks"><span>✓</span><b>Tasks</b><em id="taskCount"></em></button>
         <button class="nav-item" data-route="analytics"><span>⌁</span><b>Analytics</b></button>
@@ -55,9 +57,9 @@
         <button class="icon-button mobile-only" id="openSidebar" aria-label="Open menu">☰</button>
         <div class="global-search-wrap">
           <span aria-hidden="true">⌕</span>
-          <input id="globalSearch" type="search" placeholder="Search contacts, accounts and deals…" autocomplete="off">
+          <input id="globalSearch" type="search" placeholder="Search contacts, accounts and deals…" autocomplete="off" aria-label="Search contacts, accounts and deals" aria-controls="searchResults" aria-expanded="false">
           <kbd>⌘K</kbd>
-          <div class="search-results" id="searchResults" hidden></div>
+          <div class="search-results" id="searchResults" role="listbox" hidden></div>
         </div>
         <div class="account-context">
           <label for="accountSwitcher">Account</label>

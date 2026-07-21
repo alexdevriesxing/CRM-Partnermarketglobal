@@ -11,7 +11,7 @@ test.before(async()=>{
 test.after(()=>server?.kill());
 
 test('mock app serves shell and health',async()=>{
-  const health=await fetch('http://127.0.0.1:8787/health').then(r=>r.json());assert.equal(health.ok,true);assert.equal(health.version,'2.0.0');
+  const health=await fetch('http://127.0.0.1:8787/health').then(r=>r.json());assert.equal(health.ok,true);assert.equal(health.version,'2.3.0');
   const html=await fetch('http://127.0.0.1:8787').then(r=>r.text());assert.match(html,/PartnerMarket Global CRM/);assert.match(html,/workspaceSwitcher/);
 });
 
