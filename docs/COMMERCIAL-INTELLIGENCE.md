@@ -22,7 +22,7 @@ Risk scoring is transparent. It is composed from overdue close dates, stale upda
 
 ## Account attention
 
-Accounts are surfaced when relationship health is weak, no contact has occurred for 60 days, or overdue tasks and follow-ups remain open. Account risk is read-only and links back to the existing account and follow-up workflows.
+Accounts are surfaced when relationship health is weak, no contact has occurred within twice the selected opportunity-risk window, or overdue tasks and follow-ups remain open. The account inactivity threshold is capped at 365 days. Account risk is read-only and links back to the existing account and follow-up workflows.
 
 ## Data quality
 
@@ -40,6 +40,10 @@ Optional query parameters:
 - `days`: inactivity risk threshold between 30 and 180 days. Account inactivity uses twice the selected threshold, capped at 365 days.
 
 The endpoint returns forecast totals, monthly forecast, risky opportunities, risky accounts, data-quality metrics and duplicate groups.
+
+## Performance
+
+Migration `0005_commercial_intelligence_indexes.sql` adds non-destructive indexes for expected close dates, opportunity updates, account relationship health, overdue tasks and follow-ups, contact email lookup and account name/domain lookup. All indexes use `IF NOT EXISTS` and require no data rewrite.
 
 ## Operational guidance
 
