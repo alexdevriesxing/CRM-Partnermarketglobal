@@ -24,11 +24,25 @@ jobs:
       - name: Apply Email Center pass
         run: node scripts/apply-email-center-v23.mjs
       - name: Validate full repository
-        run: npm run validate
-      - name: Commit materialized source
+        id: validate
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run validate 2>&1 | tee validation.log
+      - name: Publish validation diagnostics
+        if: failure()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add validation.log
+          git commit -m "Capture Email Center validation diagnostics" || true
+          git push origin HEAD:agent/email-center-v23
+      - name: Commit materialized source
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f validation.log
           git add -A
           if git diff --cached --quiet; then
             echo "No source changes to commit."
