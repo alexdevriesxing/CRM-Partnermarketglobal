@@ -1,6 +1,9 @@
 import { parseJson } from './lib/domain.js';
 import {
+  attachmentMetadata,
   isAllowedSender,
+  normalizeAttachments,
+  normalizeClientRequestId,
   normalizeEmailList,
   parseAllowedDomains,
   plainTextFromHtml,
@@ -38,17 +41,42 @@ async function audit(env, ctx, request, action, entityType, entityId, after = nu
     VALUES (?,?,?,?,?,?,?,?)`).bind(id(), ctx.user.id, action, entityType, entityId, after ? JSON.stringify(after) : null, ipHash, ctx.workspace.id).run();
 }
 
-function senderRecord(row) { return row ? { ...row, is_default: Boolean(row.is_default), is_active: Boolean(row.is_active) } : null; }
+function senderRecord(row) {
+  return row ? { ...row, is_default: Boolean(row.is_default), is_active: Boolean(row.is_active) } : null;
+}
 function messageRecord(row) {
   return row ? {
     ...row,
     to: parseJson(row.to_json, []),
     cc: parseJson(row.cc_json, []),
     bcc: parseJson(row.bcc_json, []),
+    attachments: parseJson(row.attachments_json, []),
   } : null;
 }
 function contactLabel(contact) { return text(`${contact?.first_name || ''} ${contact?.last_name || ''}`, contact?.email || 'Contact'); }
 function contactBlocksEmail(contact) { return Boolean(contact?.email_opt_out) || contact?.status === 'do_not_contact' || contact?.consent_status === 'withdrawn'; }
+
+const EMAIL_MESSAGE_SELECT = `SELECT m.*,s.display_name sender_display_name,c.first_name||' '||c.last_name contact_name,
+  o.name organization_name,d.name deal_name,u.name user_name
+  FROM email_messages m
+  LEFT JOIN email_sender_identities s ON s.id=m.sender_identity_id
+  LEFT JOIN contacts c ON c.id=m.contact_id
+  LEFT JOIN organizations o ON o.id=m.organization_id
+  LEFT JOIN deals d ON d.id=m.deal_id
+  LEFT JOIN users u ON u.id=m.user_id`;
+
+async function getMessageByRequestId(env, workspaceId, clientRequestId) {
+  if (!clientRequestId) return null;
+  return env.DB.prepare(`${EMAIL_MESSAGE_SELECT} WHERE m.workspace_id=? AND m.client_request_id=? LIMIT 1`).bind(workspaceId, clientRequestId).first();
+}
+async function getMessageById(env, workspaceId, emailId) {
+  return env.DB.prepare(`${EMAIL_MESSAGE_SELECT} WHERE m.workspace_id=? AND m.id=? LIMIT 1`).bind(workspaceId, emailId).first();
+}
+function replayResult(row) {
+  if (!row) return null;
+  if (row.status === 'failed') throw Object.assign(new Error('This send request already failed. Duplicate the draft before retrying so a new request ID is used.'), { status: 409, code: 'E_IDEMPOTENCY_FAILED' });
+  return { ...messageRecord(row), idempotent_replay: true };
+}
 
 export async function listEmailSenders(env, ctx) {
   const rows = await env.DB.prepare(`SELECT * FROM email_sender_identities
@@ -110,15 +138,14 @@ export async function listEmailMessages(env, ctx, request) {
     const value = text(url.searchParams.get(param));
     if (value) { conditions.push(`${column}=?`); bindings.push(value); }
   }
+  const q = text(url.searchParams.get('q'));
+  if (q) {
+    const match = `%${q.toLowerCase()}%`;
+    conditions.push('(lower(m.subject) LIKE ? OR lower(m.to_json) LIKE ? OR lower(o.name) LIKE ? OR lower(c.first_name||\' \'||c.last_name) LIKE ?)');
+    bindings.push(match, match, match, match);
+  }
   const limit = Math.max(1, Math.min(250, Number(url.searchParams.get('limit') || 100)));
-  const rows = await env.DB.prepare(`SELECT m.*,s.display_name sender_display_name,c.first_name||' '||c.last_name contact_name,o.name organization_name,d.name deal_name,u.name user_name
-    FROM email_messages m
-    LEFT JOIN email_sender_identities s ON s.id=m.sender_identity_id
-    LEFT JOIN contacts c ON c.id=m.contact_id
-    LEFT JOIN organizations o ON o.id=m.organization_id
-    LEFT JOIN deals d ON d.id=m.deal_id
-    LEFT JOIN users u ON u.id=m.user_id
-    WHERE ${conditions.join(' AND ')} ORDER BY m.created_at DESC LIMIT ?`).bind(...bindings, limit).all();
+  const rows = await env.DB.prepare(`${EMAIL_MESSAGE_SELECT} WHERE ${conditions.join(' AND ')} ORDER BY m.created_at DESC LIMIT ?`).bind(...bindings, limit).all();
   return (rows.results || []).map(messageRecord);
 }
 
@@ -157,7 +184,6 @@ async function resolveAssociation(env, ctx, data, recipients) {
     if (!deal) throw Object.assign(new Error('Deal not found'), { status: 404 });
     if (deal.organization_id && deal.organization_id !== organization.id) throw new Error('The selected deal belongs to a different account');
   }
-
   return { contact: selectedContact || recipientContacts[0] || null, organization, recipientContacts, deal };
 }
 
@@ -175,10 +201,14 @@ function activityMetadata(emailId, sender, recipients, status, extras = {}) {
   };
 }
 
-async function createQueuedEmailActivity(env, ctx, data, association, emailId, sender, recipients, createdAt) {
+async function createQueuedEmailActivity(env, ctx, data, association, emailId, sender, recipients, createdAt, attachments, clientRequestId) {
   const activityId = id();
   const body = text(data.text_body, plainTextFromHtml(data.html_body));
-  const metadata = activityMetadata(emailId, sender, recipients, 'queued', { html_body: text(data.html_body) });
+  const metadata = activityMetadata(emailId, sender, recipients, 'queued', {
+    html_body: text(data.html_body),
+    attachments: attachmentMetadata(attachments),
+    client_request_id: clientRequestId,
+  });
   await env.DB.prepare(`INSERT INTO activities
     (id,workspace_id,contact_id,organization_id,user_id,type,direction,subject,body,outcome,occurred_at,metadata_json,deal_id,next_step)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
@@ -200,10 +230,15 @@ async function createFollowUpFromEmail(env, ctx, data, association) {
   return followUpId;
 }
 
-async function markDeliveryFailed(env, ctx, request, emailId, activityId, sender, recipients, error) {
+async function markDeliveryFailed(env, ctx, request, emailId, activityId, sender, recipients, attachments, clientRequestId, error) {
   const failureCode = text(error.code, 'E_EMAIL_DELIVERY_FAILED');
   const failureReason = text(error.message, 'Email delivery failed');
-  const metadata = activityMetadata(emailId, sender, recipients, 'failed', { failure_code: failureCode, failure_reason: failureReason });
+  const metadata = activityMetadata(emailId, sender, recipients, 'failed', {
+    failure_code: failureCode,
+    failure_reason: failureReason,
+    attachments: attachmentMetadata(attachments),
+    client_request_id: clientRequestId,
+  });
   try {
     await env.DB.batch([
       env.DB.prepare(`UPDATE email_messages SET status='failed',failure_code=?,failure_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND workspace_id=?`).bind(failureCode, failureReason, emailId, ctx.workspace.id),
@@ -217,6 +252,11 @@ export async function sendCrmEmail(env, ctx, request) {
   requireWrite(ctx);
   if (!env.EMAIL_SERVICE) throw Object.assign(new Error('The private Email Worker service binding is not configured'), { status: 503 });
   const data = await bodyJson(request);
+  const clientRequestId = normalizeClientRequestId(request.headers.get('idempotency-key') || data.client_request_id || crypto.randomUUID());
+  const previous = await getMessageByRequestId(env, ctx.workspace.id, clientRequestId);
+  if (previous) return replayResult(previous);
+
+  const attachments = normalizeAttachments(data.attachments);
   const recipients = {
     to: normalizeEmailList(data.to),
     cc: normalizeEmailList(data.cc),
@@ -236,17 +276,23 @@ export async function sendCrmEmail(env, ctx, request) {
   const association = await resolveAssociation(env, ctx, data, recipients);
   const emailId = id();
   const createdAt = nowIso();
-  await env.DB.prepare(`INSERT INTO email_messages
-    (id,workspace_id,sender_identity_id,contact_id,organization_id,deal_id,user_id,from_email,from_name,reply_to,to_json,cc_json,bcc_json,subject,text_body,html_body,status,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
-      emailId, ctx.workspace.id, sender.id, association.contact?.id || null, association.organization.id, association.deal?.id || null, ctx.user.id,
-      sender.email_address, sender.display_name, sender.reply_to, JSON.stringify(recipients.to), JSON.stringify(recipients.cc), JSON.stringify(recipients.bcc),
-      text(data.subject), text(data.text_body), text(data.html_body), 'queued', createdAt, createdAt
-    ).run();
+  try {
+    await env.DB.prepare(`INSERT INTO email_messages
+      (id,workspace_id,sender_identity_id,contact_id,organization_id,deal_id,user_id,from_email,from_name,reply_to,to_json,cc_json,bcc_json,subject,text_body,html_body,status,client_request_id,attachments_json,recipient_count,delivery_attempts,last_attempt_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+        emailId, ctx.workspace.id, sender.id, association.contact?.id || null, association.organization.id, association.deal?.id || null, ctx.user.id,
+        sender.email_address, sender.display_name, sender.reply_to, JSON.stringify(recipients.to), JSON.stringify(recipients.cc), JSON.stringify(recipients.bcc),
+        text(data.subject), text(data.text_body), text(data.html_body), 'queued', clientRequestId, JSON.stringify(attachmentMetadata(attachments)), recipientCount(recipients), 1, createdAt, createdAt, createdAt
+      ).run();
+  } catch (error) {
+    const raced = await getMessageByRequestId(env, ctx.workspace.id, clientRequestId);
+    if (raced) return replayResult(raced);
+    throw error;
+  }
 
   let activityId;
   try {
-    activityId = await createQueuedEmailActivity(env, ctx, data, association, emailId, sender, recipients, createdAt);
+    activityId = await createQueuedEmailActivity(env, ctx, data, association, emailId, sender, recipients, createdAt, attachments, clientRequestId);
     await env.DB.prepare('UPDATE email_messages SET activity_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND workspace_id=?').bind(activityId, emailId, ctx.workspace.id).run();
   } catch (error) {
     try { await env.DB.prepare(`UPDATE email_messages SET status='failed',failure_code='E_CRM_PRELOG_FAILED',failure_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND workspace_id=?`).bind(text(error.message, 'Unable to create CRM activity'), emailId, ctx.workspace.id).run(); } catch { /* original error is more useful */ }
@@ -257,7 +303,7 @@ export async function sendCrmEmail(env, ctx, request) {
   try {
     const response = await env.EMAIL_SERVICE.fetch('https://email.internal/send', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-request-id': clientRequestId },
       body: JSON.stringify({
         emailId,
         workspaceId: ctx.workspace.id,
@@ -272,17 +318,24 @@ export async function sendCrmEmail(env, ctx, request) {
         subject: text(data.subject),
         text: text(data.text_body, plainTextFromHtml(data.html_body)),
         html: text(data.html_body),
+        attachments,
+        clientRequestId,
       }),
     });
     delivery = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(new Error(delivery.error || 'Email delivery failed'), { code: delivery.code || 'E_EMAIL_DELIVERY_FAILED', status: response.status });
   } catch (error) {
-    await markDeliveryFailed(env, ctx, request, emailId, activityId, sender, recipients, error);
+    await markDeliveryFailed(env, ctx, request, emailId, activityId, sender, recipients, attachments, clientRequestId, error);
     throw Object.assign(error, { status: error.status || 502 });
   }
 
   const sentAt = nowIso();
-  const sentMetadata = activityMetadata(emailId, sender, recipients, 'sent', { provider_message_id: delivery.messageId, html_body: text(data.html_body) });
+  const sentMetadata = activityMetadata(emailId, sender, recipients, 'sent', {
+    provider_message_id: delivery.messageId,
+    html_body: text(data.html_body),
+    attachments: attachmentMetadata(attachments),
+    client_request_id: clientRequestId,
+  });
   let loggingWarning = null;
   try {
     const statements = [
@@ -297,7 +350,7 @@ export async function sendCrmEmail(env, ctx, request) {
     console.error('Email delivered with incomplete CRM post-processing', error);
     try {
       await env.DB.prepare(`UPDATE email_messages SET status='sent',provider_message_id=?,sent_at=?,failure_code='E_CRM_POSTLOG_INCOMPLETE',failure_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND workspace_id=?`).bind(delivery.messageId, sentAt, text(error.message, loggingWarning), emailId, ctx.workspace.id).run();
-    } catch { /* the queued message and activity still preserve the account association */ }
+    } catch { /* queued records preserve account association */ }
   }
 
   let followUpId = null;
@@ -306,13 +359,12 @@ export async function sendCrmEmail(env, ctx, request) {
     console.error('Unable to create email follow-up', error);
   }
   if (association.contact) {
-    try { await env.ACTIVITY_QUEUE?.send({ type: 'recalculate_contact', workspace_id: ctx.workspace.id, contact_id: association.contact.id }, { contentType: 'json' }); } catch { /* delivery and logging are already complete */ }
+    try { await env.ACTIVITY_QUEUE?.send({ type: 'recalculate_contact', workspace_id: ctx.workspace.id, contact_id: association.contact.id }, { contentType: 'json' }); } catch { /* delivery and logging are complete */ }
   }
-  try { await audit(env, ctx, request, 'send', 'email_message', emailId, { provider_message_id: delivery.messageId, activity_id: activityId }); } catch (error) { console.error('Unable to audit sent email', error); }
+  try { await audit(env, ctx, request, 'send', 'email_message', emailId, { provider_message_id: delivery.messageId, activity_id: activityId, client_request_id: clientRequestId }); } catch (error) { console.error('Unable to audit sent email', error); }
   try { env.USAGE_ANALYTICS?.writeDataPoint({ indexes: [ctx.workspace.id], blobs: ['email_sent', association.organization.id, association.contact?.id || '', sender.domain], doubles: [1, Date.now()] }); } catch { /* analytics never blocks */ }
 
-  let result = null;
-  try { result = await env.DB.prepare('SELECT * FROM email_messages WHERE id=? AND workspace_id=?').bind(emailId, ctx.workspace.id).first(); } catch { /* return a safe constructed response */ }
+  const result = await getMessageById(env, ctx.workspace.id, emailId).catch(() => null);
   return {
     ...(messageRecord(result) || {
       id: emailId,
@@ -327,6 +379,9 @@ export async function sendCrmEmail(env, ctx, request) {
       cc: recipients.cc,
       bcc: recipients.bcc,
       subject: text(data.subject),
+      attachments: attachmentMetadata(attachments),
+      client_request_id: clientRequestId,
+      recipient_count: recipientCount(recipients),
     }),
     status: 'sent',
     provider_message_id: delivery.messageId,
@@ -335,5 +390,6 @@ export async function sendCrmEmail(env, ctx, request) {
     organization_name: association.organization.name,
     contact_name: association.contact ? contactLabel(association.contact) : null,
     logging_warning: loggingWarning,
+    idempotent_replay: false,
   };
 }
