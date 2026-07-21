@@ -23,6 +23,8 @@ jobs:
           node-version: 22
       - name: Apply detailed reporting pass
         run: node scripts/apply-detailed-reporting-v25.mjs
+      - name: Apply validation corrections
+        run: node scripts/fix-detailed-reporting-v25.mjs
       - name: Validate full repository
         id: validate
         shell: bash
