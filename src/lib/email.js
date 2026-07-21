@@ -4,7 +4,13 @@ export const DEFAULT_SENDER_DOMAINS = Object.freeze([
   'partnermarketglobal.com',
 ]);
 
+export const MAX_EMAIL_RECIPIENTS = 50;
+export const MAX_EMAIL_ATTACHMENTS = 10;
+export const MAX_EMAIL_ATTACHMENT_BYTES = 4 * 1024 * 1024;
+export const MAX_SINGLE_ATTACHMENT_BYTES = 3 * 1024 * 1024;
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
+const REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}$/;
 
 export function normalizeEmailList(value) {
   const raw = Array.isArray(value) ? value : String(value ?? '').split(/[;,\n]/);
@@ -39,6 +45,49 @@ export function isAllowedSender(value, allowedDomains = DEFAULT_SENDER_DOMAINS) 
 
 export function recipientCount(message) {
   return normalizeEmailList(message?.to).length + normalizeEmailList(message?.cc).length + normalizeEmailList(message?.bcc).length;
+}
+
+export function normalizeClientRequestId(value) {
+  const result = String(value ?? '').trim();
+  if (!result) return null;
+  if (!REQUEST_ID_PATTERN.test(result)) throw new Error('The email request ID is invalid');
+  return result;
+}
+
+export function base64DecodedBytes(value) {
+  const raw = String(value ?? '').replace(/^data:[^;]+;base64,/i, '').replace(/\s+/g, '');
+  if (!raw) return 0;
+  const padding = raw.endsWith('==') ? 2 : raw.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor(raw.length * 3 / 4) - padding);
+}
+
+export function normalizeAttachments(value) {
+  if (!value) return [];
+  if (!Array.isArray(value)) throw new Error('Attachments must be supplied as a list');
+  if (value.length > MAX_EMAIL_ATTACHMENTS) throw new Error(`A maximum of ${MAX_EMAIL_ATTACHMENTS} attachments is supported`);
+
+  let totalBytes = 0;
+  return value.map((attachment, index) => {
+    const filename = String(attachment?.filename ?? '').trim().replace(/[\r\n]/g, '').slice(0, 240);
+    const type = String(attachment?.type || 'application/octet-stream').trim().toLowerCase().slice(0, 150);
+    const disposition = attachment?.disposition === 'inline' ? 'inline' : 'attachment';
+    const contentId = disposition === 'inline' ? String(attachment?.contentId ?? '').trim().replace(/[\r\n<>]/g, '').slice(0, 200) : undefined;
+    const content = String(attachment?.content ?? '').replace(/^data:[^;]+;base64,/i, '').replace(/\s+/g, '');
+    const sizeBytes = Number(attachment?.size_bytes || base64DecodedBytes(content));
+
+    if (!filename) throw new Error(`Attachment ${index + 1} has no filename`);
+    if (!content) throw new Error(`${filename} has no content`);
+    if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) throw new Error(`${filename} has an invalid size`);
+    if (sizeBytes > MAX_SINGLE_ATTACHMENT_BYTES) throw new Error(`${filename} exceeds the 3 MiB per-file limit`);
+    totalBytes += sizeBytes;
+    if (totalBytes > MAX_EMAIL_ATTACHMENT_BYTES) throw new Error('Attachments exceed the 4 MiB combined limit');
+
+    return { content, filename, type, disposition, ...(contentId ? { contentId } : {}), size_bytes: sizeBytes };
+  });
+}
+
+export function attachmentMetadata(attachments) {
+  return normalizeAttachments(attachments).map(({ filename, type, disposition, contentId, size_bytes }) => ({ filename, type, disposition, ...(contentId ? { contentId } : {}), size_bytes }));
 }
 
 export function plainTextFromHtml(html) {
