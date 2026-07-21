@@ -23,7 +23,10 @@ jobs:
         id: materialize
         run: |
           if [ -f .v2-package/READY ]; then
-            node scripts/materialize-v2.mjs
+            find .v2-package -maxdepth 1 -type f -name 'part-*' -print0 | sort -z | xargs -0 cat > /tmp/pmg-crm-v2.b64
+            base64 --decode /tmp/pmg-crm-v2.b64 > /tmp/pmg-crm-v2.tar.gz
+            echo "230b6b705afdb069b471f48e6f8054d11ebb5cfa708ba322ec9ccfe3f53e97d7  /tmp/pmg-crm-v2.tar.gz" | sha256sum --check
+            tar -xzf /tmp/pmg-crm-v2.tar.gz
             rm -f tests/integration.test.mjs .placeholder .v2-trigger .crm-v2-cleanup
             rm -rf .v2-package scripts/materialize-v2.mjs .github/workflows/assemble-v2.yml
             echo "changed=true" >> "$GITHUB_OUTPUT"
