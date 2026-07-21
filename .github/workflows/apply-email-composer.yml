@@ -28,11 +28,35 @@ jobs:
       - name: Apply email composer integration
         run: node scripts/apply-email-composer.mjs
       - name: Validate CRM and email worker
-        run: npm run validate
+        id: validation
+        shell: bash
+        run: |
+          set +e
+          npm run validate > /tmp/email-validation.log 2>&1
+          status=$?
+          cat /tmp/email-validation.log
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Commit validation diagnostics
+        if: steps.validation.outputs.status != '0'
+        shell: bash
+        run: |
+          cp /tmp/email-validation.log /tmp/email-validation.saved
+          git reset --hard HEAD
+          cp /tmp/email-validation.saved .email-validation.log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .email-validation.log
+          git commit -m "Record email composer validation failure"
+          git push origin HEAD:agent/email-composer
       - name: Commit integrated source
+        if: steps.validation.outputs.status == '0'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "Add integrated CRM email composer"
           git push origin HEAD:agent/email-composer
+      - name: Fail when validation failed
+        if: steps.validation.outputs.status != '0'
+        run: exit 1
