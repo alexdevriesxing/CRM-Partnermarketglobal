@@ -39,8 +39,12 @@ await update('scripts/dev-server.mjs', (content) => {
   const end = content.indexOf("  if(p[1]==='analytics'){", start);
   if (start < 0 || end < 0) return content;
   let block = content.slice(start, end);
+  const declaration = "const staleDays=Math.max(30,Math.min(180,Number(url.searchParams.get('days')||30)));";
+  while (block.includes(`${declaration}${declaration}`)) block = block.replace(`${declaration}${declaration}`, declaration);
+  if (!block.includes(declaration)) {
+    block = block.replace("const account=url.searchParams.get('account');const cs=", `${declaration}const account=url.searchParams.get('account');const cs=`);
+  }
   block = block
-    .replace("const account=url.searchParams.get('account');const cs=", "const staleDays=Math.max(30,Math.min(180,Number(url.searchParams.get('days')||30)));const account=url.searchParams.get('account');const cs=")
     .replaceAll('now-30*864e5', 'now-staleDays*864e5')
     .replaceAll('now-60*864e5', 'now-staleDays*2*864e5')
     .replace("window_days:Number(url.searchParams.get('days')||90),account_id", "window_days:staleDays,stale_after_days:staleDays,account_inactive_after_days:Math.min(365,staleDays*2),account_id");
@@ -60,4 +64,4 @@ await update('docs/COMMERCIAL-INTELLIGENCE.md', (content) => content
   .replace('- `days`: activity window between 30 and 365 days.', '- `days`: inactivity risk threshold between 30 and 180 days. Account inactivity uses twice the selected threshold, capped at 365 days.')
   .replace('opportunities with no update for at least 30 days;', 'opportunities with no update within the selected 30, 60, 90 or 180-day risk window;'));
 
-console.log('Applied idempotent release and risk-window corrections.');
+console.log('Applied repeat-safe release and risk-window corrections.');
