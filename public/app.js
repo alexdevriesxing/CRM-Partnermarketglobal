@@ -1,634 +1,323 @@
 const state = {
   route: 'dashboard',
   me: null,
+  workspaceId: localStorage.getItem('pmg-workspace') || '',
+  accountId: localStorage.getItem('pmg-account') || '',
   dashboard: null,
-  contacts: { items: [], page: 1, pageSize: 25, total: 0, pages: 1, q: '', stage: '', sort: 'last_contact' },
+  agenda: null,
+  agendaBucket: 'all',
+  contacts: { items: [], page: 1, pageSize: 25, total: 0, pages: 1, q: '', stage: '', health: '', sort: 'last_contact' },
   organizations: [],
+  users: [],
+  activities: [],
+  activityFilters: { q: '', type: '', contact: '' },
   deals: [],
   tasks: [],
+  taskFilters: { status: '', type: '', assignee: '' },
+  followUps: [],
   analytics: null,
-  selectedContacts: new Set(),
-  activeContact: null,
+  activeRecord: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const icons = { email:'✉', call:'☎', meeting:'◫', whatsapp:'◉', linkedin:'in', note:'✎', task_update:'✓', status_change:'↻', file:'↥', other:'•' };
+const stageOrder = ['lead','qualified','discovery','proposal','negotiation','won','lost'];
 
-const icons = {
-  contacts: '◎', organizations: '▦', overdue: '!', followups: '↻', activity: '↗',
-  email: '✉', call: '☎', meeting: '◫', whatsapp: '◉', linkedin: 'in', note: '✎', file: '↥', other: '•',
-};
+function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[char]); }
+function initials(first='',last='') { return `${String(first).trim()[0]||''}${String(last).trim()[0]||''}`.toUpperCase() || 'PM'; }
+function titleCase(value) { return String(value||'').replaceAll('_',' ').replace(/\b\w/g,(char)=>char.toUpperCase()); }
+function compactNumber(value) { return new Intl.NumberFormat('en',{notation:'compact',maximumFractionDigits:1}).format(Number(value||0)); }
+function formatCurrency(value,currency='EUR',compact=true) { try { return new Intl.NumberFormat('en-NL',{style:'currency',currency,notation:compact?'compact':'standard',maximumFractionDigits:compact?1:0}).format(Number(value||0)); } catch { return `€${Number(value||0).toLocaleString()}`; } }
+function formatDate(value,withTime=false) { if(!value)return'—';const date=new Date(value);if(Number.isNaN(date.getTime()))return'—';return new Intl.DateTimeFormat('en-GB',withTime?{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}:{day:'numeric',month:'short',year:'numeric'}).format(date); }
+function localInputDate(value,includeTime=true) { const d=value?new Date(value):new Date();if(Number.isNaN(d.getTime()))return'';const pad=(n)=>String(n).padStart(2,'0');return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}${includeTime?`T${pad(d.getHours())}:${pad(d.getMinutes())}`:''}`; }
+function relativeTime(value) { if(!value)return'Never';const date=new Date(value);if(Number.isNaN(date.getTime()))return'—';const seconds=Math.round((date-Date.now())/1000);const abs=Math.abs(seconds);const f=new Intl.RelativeTimeFormat('en',{numeric:'auto'});if(abs<60)return f.format(seconds,'second');if(abs<3600)return f.format(Math.round(seconds/60),'minute');if(abs<86400)return f.format(Math.round(seconds/3600),'hour');if(abs<2592000)return f.format(Math.round(seconds/86400),'day');return f.format(Math.round(seconds/2592000),'month'); }
+function dueBucket(value) { if(!value)return'unscheduled';const due=new Date(value);const start=new Date();start.setHours(0,0,0,0);const tomorrow=new Date(start);tomorrow.setDate(tomorrow.getDate()+1);const nextWeek=new Date(start);nextWeek.setDate(nextWeek.getDate()+8);if(due<start)return'overdue';if(due<tomorrow)return'today';if(due<nextWeek)return'upcoming';return'later'; }
+function healthBadge(score) { const n=Number(score||0);if(n>=80)return'<span class="badge green">Strong</span>';if(n>=55)return'<span class="badge primary">Healthy</span>';if(n>=35)return'<span class="badge amber">Attention</span>';return'<span class="badge red">At risk</span>'; }
+function priorityBadge(priority) { return `<span class="badge"><i class="priority-dot ${escapeHtml(priority||'medium')}"></i>${escapeHtml(titleCase(priority||'medium'))}</span>`; }
+function debounce(fn,wait=250){let timer;return(...args)=>{clearTimeout(timer);timer=setTimeout(()=>fn(...args),wait);};}
+function uid() { return Math.random().toString(36).slice(2,8); }
 
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
-}
-
-function initials(first = '', last = '') {
-  return `${String(first).trim()[0] || ''}${String(last).trim()[0] || ''}`.toUpperCase() || 'PM';
-}
-
-function titleCase(value) {
-  return String(value || '').replaceAll('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function formatCurrency(value, currency = 'EUR', compact = true) {
-  try {
-    return new Intl.NumberFormat('en-NL', { style: 'currency', currency, notation: compact ? 'compact' : 'standard', maximumFractionDigits: compact ? 1 : 0 }).format(Number(value || 0));
-  } catch {
-    return `€${Number(value || 0).toLocaleString()}`;
-  }
-}
-
-function formatDate(value, options = {}) {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
-  return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', ...options }).format(date);
-}
-
-function relativeTime(value) {
-  if (!value) return 'Never';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
-  const seconds = Math.round((date.getTime() - Date.now()) / 1000);
-  const abs = Math.abs(seconds);
-  const formatter = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
-  if (abs < 60) return formatter.format(seconds, 'second');
-  if (abs < 3600) return formatter.format(Math.round(seconds / 60), 'minute');
-  if (abs < 86400) return formatter.format(Math.round(seconds / 3600), 'hour');
-  if (abs < 2_592_000) return formatter.format(Math.round(seconds / 86400), 'day');
-  return formatter.format(Math.round(seconds / 2_592_000), 'month');
-}
-
-function healthColor(score) {
-  if (score >= 80) return 'var(--green)';
-  if (score >= 55) return 'var(--primary)';
-  if (score >= 35) return 'var(--amber)';
-  return 'var(--red)';
-}
-
-function debounce(fn, wait = 250) {
-  let timer;
-  return (...args) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), wait);
-  };
-}
-
-async function api(path, options = {}) {
-  const config = { ...options, headers: { ...(options.body && !(options.body instanceof FormData) ? { 'content-type': 'application/json' } : {}), ...(options.headers || {}) } };
-  if (config.body && !(config.body instanceof FormData) && typeof config.body !== 'string') config.body = JSON.stringify(config.body);
-  const response = await fetch(path, config);
-  const contentType = response.headers.get('content-type') || '';
-  const payload = contentType.includes('application/json') ? await response.json() : await response.text();
-  if (!response.ok) throw new Error(payload?.error || payload || `Request failed (${response.status})`);
+async function api(path,options={}) {
+  const headers = { ...(options.body && !(options.body instanceof FormData) ? {'content-type':'application/json'} : {}), ...(options.headers||{}) };
+  if(state.workspaceId) headers['x-workspace-id']=state.workspaceId;
+  const config={...options,headers};
+  if(config.body && !(config.body instanceof FormData) && typeof config.body!=='string')config.body=JSON.stringify(config.body);
+  const response=await fetch(path,config);
+  const type=response.headers.get('content-type')||'';
+  const payload=type.includes('application/json')?await response.json():await response.text();
+  if(!response.ok)throw new Error(payload?.error||payload||`Request failed (${response.status})`);
   return payload;
 }
+function toast(title,message='',type='success'){const node=document.createElement('div');node.className=`toast ${type}`;node.innerHTML=`<strong>${escapeHtml(title)}</strong>${message?`<span>${escapeHtml(message)}</span>`:''}`;$('#toastStack').append(node);setTimeout(()=>node.remove(),4300);}
+function loading(message='Loading…'){return `<div class="loading-state"><span class="spinner"></span><span>${escapeHtml(message)}</span></div>`;}
+function empty(title,message,action=''){return `<div class="empty-state"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(message)}</span>${action?`<div style="margin-top:12px">${action}</div>`:''}</div>`;}
+function accountQuery(){return state.accountId?`account=${encodeURIComponent(state.accountId)}`:'';}
+function currentWorkspace(){return state.me?.workspaces?.find((w)=>w.id===state.workspaceId)||state.me?.workspace||{};}
+function selectedAccount(){return state.organizations.find((o)=>o.id===state.accountId)||null;}
+function optionList(items,valueKey,labelFn,selected='',placeholder='Select…'){return `<option value="">${escapeHtml(placeholder)}</option>${items.map((item)=>`<option value="${escapeHtml(item[valueKey])}" ${String(item[valueKey])===String(selected)?'selected':''}>${escapeHtml(labelFn(item))}</option>`).join('')}`;}
 
-function toast(title, message = '', type = 'success') {
-  const node = document.createElement('div');
-  node.className = `toast ${type}`;
-  node.innerHTML = `<strong>${escapeHtml(title)}</strong>${message ? `<span>${escapeHtml(message)}</span>` : ''}`;
-  $('#toastStack').append(node);
-  setTimeout(() => node.remove(), 4200);
+async function boot(){
+  document.documentElement.dataset.theme=localStorage.getItem('pmg-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  bindGlobalEvents();
+  try{
+    state.me=await api('/api/me');
+    if(!state.workspaceId||!state.me.workspaces.some((w)=>w.id===state.workspaceId))state.workspaceId=state.me.workspace.id;
+    localStorage.setItem('pmg-workspace',state.workspaceId);
+    if(state.me.workspace.id!==state.workspaceId)state.me=await api('/api/me');
+    renderIdentity();
+    await loadReferenceData();
+    navigate(location.hash.slice(1)||'dashboard');
+  }catch(error){renderFatal(error);}
 }
-
-function setLoading(element, text = 'Loading…') {
-  if (element) element.innerHTML = `<div class="empty-state"><div class="skeleton" style="width:180px;margin:0 auto 12px"></div><span>${escapeHtml(text)}</span></div>`;
+function renderIdentity(){
+  const user=state.me?.user||{};const names=String(user.name||'').split(' ');
+  $('#userName').textContent=user.name||user.email||'CRM user';$('#userRole').textContent=user.role||'member';$('#userAvatar').textContent=initials(names[0],names.at(-1));
+  $('#workspaceSwitcher').innerHTML=(state.me?.workspaces||[]).map((w)=>`<option value="${w.id}" ${w.id===state.workspaceId?'selected':''}>${escapeHtml(w.name)}</option>`).join('');
+  const workspace=currentWorkspace();$('#workspaceDot').style.background=workspace.color||'#35b6a8';
+  $('#newWorkspaceButton').hidden=!state.me?.permissions?.can_admin;
 }
-
-function navigate(route) {
-  const known = ['dashboard', 'contacts', 'organizations', 'pipeline', 'tasks', 'analytics', 'data', 'settings'];
-  state.route = known.includes(route) ? route : 'dashboard';
-  if (location.hash !== `#${state.route}`) history.replaceState(null, '', `#${state.route}`);
-  $$('.page').forEach((page) => page.classList.toggle('active', page.dataset.page === state.route));
-  $$('.nav-item[data-route]').forEach((item) => item.classList.toggle('active', item.dataset.route === state.route));
-  $('#content').focus({ preventScroll: true });
-  $('#sidebar').classList.remove('open');
-  loadRoute(state.route);
+async function loadReferenceData(){
+  [state.organizations,state.users]=await Promise.all([api('/api/organizations'),api('/api/users')]);
+  if(state.accountId&&!state.organizations.some((o)=>o.id===state.accountId)){state.accountId='';localStorage.removeItem('pmg-account');}
+  $('#accountSwitcher').innerHTML=optionList(state.organizations,'id',(o)=>o.name,state.accountId,'All accounts');
+  $('#clearAccountFilter').hidden=!state.accountId;
 }
+function renderFatal(error){$('#content').innerHTML=`<section class="panel" style="max-width:760px;margin:50px auto"><div class="panel-body"><p class="eyebrow">Connection required</p><h1>CRM API could not be reached</h1><p>${escapeHtml(error.message)}</p><div class="callout"><strong>Local preview</strong>Run <code>npm run dev:mock</code> and open <code>http://localhost:8787</code>.</div></div></section>`;}
 
-async function loadRoute(route) {
-  try {
-    if (route === 'dashboard' && !state.dashboard) await loadDashboard();
-    if (route === 'contacts') await loadContacts();
-    if (route === 'organizations') await loadOrganizations();
-    if (route === 'pipeline') await loadDeals();
-    if (route === 'tasks') await loadTasks();
-    if (route === 'analytics') await loadAnalytics();
-  } catch (error) {
-    toast('Unable to load data', error.message, 'error');
-  }
+function navigate(route){
+  const known=['dashboard','agenda','contacts','organizations','activity','pipeline','tasks','analytics','data','settings'];
+  state.route=known.includes(route)?route:'dashboard';
+  if(location.hash!==`#${state.route}`)history.replaceState(null,'',`#${state.route}`);
+  $$('.nav-item[data-route]').forEach((item)=>item.classList.toggle('active',item.dataset.route===state.route));
+  $('#sidebar').classList.remove('open');$('#content').focus({preventScroll:true});renderRoute();
 }
-
-async function boot() {
-  document.documentElement.dataset.theme = localStorage.getItem('pmg-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  bindEvents();
-  try {
-    state.me = await api('/api/me');
-    renderUser();
-    await loadDashboard();
-    navigate(location.hash.slice(1) || 'dashboard');
-  } catch (error) {
-    renderConnectionError(error);
-  }
+async function renderRoute(){
+  $('#content').innerHTML=loading();
+  try{
+    if(state.route==='dashboard')await renderDashboard();
+    else if(state.route==='agenda')await renderAgenda();
+    else if(state.route==='contacts')await renderContacts();
+    else if(state.route==='organizations')await renderOrganizations();
+    else if(state.route==='activity')await renderActivityLog();
+    else if(state.route==='pipeline')await renderPipeline();
+    else if(state.route==='tasks')await renderTasks();
+    else if(state.route==='analytics')await renderAnalytics();
+    else if(state.route==='data')renderData();
+    else if(state.route==='settings')renderSettings();
+  }catch(error){$('#content').innerHTML=empty('Unable to load this page',error.message,`<button class="button secondary" data-retry>Try again</button>`);toast('Unable to load',error.message,'error');}
 }
+function pageHeader(eyebrow,title,description,actions=''){return `<header class="page-header"><div><p class="eyebrow">${escapeHtml(eyebrow)}</p><h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></div><div class="page-actions">${actions}</div></header>`;}
 
-function renderUser() {
-  const user = state.me?.user || {};
-  $('#userName').textContent = user.name || user.email || 'CRM user';
-  $('#userRole').textContent = user.role || 'member';
-  const names = String(user.name || '').split(' ');
-  $('#userAvatar').textContent = initials(names[0], names.at(-1));
-  $('#greetingName').textContent = names[0] || 'there';
-}
-
-function renderConnectionError(error) {
-  $('.content').innerHTML = `<section class="panel" style="max-width:760px;margin:50px auto"><p class="eyebrow">Connection required</p><h1>CRM API could not be reached</h1><p>${escapeHtml(error.message)}</p><hr><p>For local UI testing, run <code>npm run dev:mock</code>. For Cloudflare development, install dependencies, configure the bindings and run <code>npm run dev</code>.</p></section>`;
-}
-
-async function loadDashboard(force = false) {
-  if (force) state.dashboard = null;
-  state.dashboard = await api('/api/dashboard');
-  renderDashboard();
-}
-
-function renderDashboard() {
-  const data = state.dashboard;
-  if (!data) return;
-  const metrics = [
-    { label: 'Active contacts', value: data.counts.contacts, caption: 'relationship records', icon: icons.contacts, color: 'var(--primary)', soft: 'var(--primary-soft)' },
-    { label: 'Organizations', value: data.counts.organizations, caption: 'active accounts', icon: icons.organizations, color: 'var(--blue)', soft: 'var(--blue-soft)' },
-    { label: 'Pipeline', value: formatCurrency(data.pipeline.total_value), caption: `${data.pipeline.win_rate}% win rate`, icon: '€', color: 'var(--purple)', soft: 'var(--purple-soft)' },
-    { label: 'Follow-ups', value: data.counts.follow_ups, caption: 'due within 7 days', icon: icons.followups, color: 'var(--amber)', soft: 'var(--amber-soft)' },
-    { label: 'Overdue tasks', value: data.counts.overdue_tasks, caption: data.counts.overdue_tasks ? 'requires attention' : 'all on track', icon: icons.overdue, color: 'var(--red)', soft: 'var(--red-soft)' },
+async function renderDashboard(){
+  if(state.accountId){const detail=await api(`/api/organizations/${state.accountId}`);renderAccountDashboard(detail);return;}
+  state.dashboard=await api('/api/dashboard');const d=state.dashboard;const ws=currentWorkspace();
+  const metrics=[
+    ['Active contacts',d.counts.contacts,'People in this database','var(--primary)','var(--primary-soft)'],
+    ['Accounts',d.counts.organizations,'Organizations managed','var(--blue)','var(--blue-soft)'],
+    ['Pipeline',formatCurrency(d.pipeline.total_value,ws.currency),'Weighted '+formatCurrency(d.pipeline.weighted_value,ws.currency),'var(--purple)','var(--purple-soft)'],
+    ['Follow-ups today',d.counts.follow_ups_today,`${d.counts.overdue_follow_ups} overdue`,'var(--amber)','var(--amber-soft)'],
+    ['Open attention',Number(d.counts.overdue_tasks||0)+Number(d.counts.overdue_follow_ups||0),'Tasks and follow-ups','var(--red)','var(--red-soft)'],
   ];
-  $('#dashboardMetrics').innerHTML = metrics.map((metric) => `<article class="metric-card" style="--metric-color:${metric.color};--metric-soft:${metric.soft}"><div class="metric-icon">${metric.icon}</div><span class="metric-label">${escapeHtml(metric.label)}</span><div class="metric-row"><strong class="metric-value">${escapeHtml(metric.value)}</strong></div><span class="metric-caption">${escapeHtml(metric.caption)}</span></article>`).join('');
-  $('#contactNavCount').textContent = data.counts.contacts;
-  $('#taskNavCount').textContent = data.counts.overdue_tasks;
-  renderActivityChart(data.activity_by_day || []);
-  renderHealth(data.health || {});
-  renderPipelineSummary(data.stages || []);
-  renderPriorityTasks(data.tasks || []);
-  renderTimeline(data.recent_activities || [], $('#recentTimeline'));
+  $('#content').innerHTML=`${pageHeader('Relationship command center',`Good ${new Date().getHours()<12?'morning':new Date().getHours()<18?'afternoon':'evening'}, ${escapeHtml(String(state.me.user.name||'').split(' ')[0]||'there')}`,`${escapeHtml(ws.name)} · Keep relationships moving and never lose the next action.`,`<button class="button secondary" data-quick="followup">＋ Follow-up</button><button class="button primary" data-quick="activity">＋ Log contact</button>`)}
+    <section class="metrics-grid">${metrics.map(([label,value,caption,color,soft])=>`<article class="metric-card" style="--metric-color:${color};--metric-soft:${soft}"><span class="metric-label">${escapeHtml(label)}</span><strong class="metric-value">${escapeHtml(value)}</strong><span class="metric-caption">${escapeHtml(caption)}</span></article>`).join('')}</section>
+    <section class="layout-grid">
+      <article class="panel"><header class="panel-header"><div><h2>Activity momentum</h2><p>Relationship touches over the last 14 days</p></div><button class="small-button" data-route-link="activity">Open log</button></header><div class="panel-body"><div class="chart" id="activityChart"></div></div></article>
+      <article class="panel"><header class="panel-header"><div><h2>Relationship health</h2><p>Contacts grouped by engagement</p></div></header><div class="panel-body"><div class="donut-wrap"><div class="donut" id="healthDonut"><div class="donut-center"><strong id="healthAverage">0</strong><small>avg score</small></div></div><div class="legend" id="healthLegend"></div></div></div></article>
+    </section>
+    <section class="layout-grid">
+      <article class="panel"><header class="panel-header"><div><h2>Follow-up queue</h2><p>Next conversations requiring action</p></div><button class="small-button" data-route-link="agenda">My Day</button></header><div class="panel-body" id="dashboardFollowups"></div></article>
+      <article class="panel"><header class="panel-header"><div><h2>Priority tasks</h2><p>Your most important open work</p></div><button class="small-button" data-route-link="tasks">All tasks</button></header><div class="panel-body" id="dashboardTasks"></div></article>
+    </section>
+    <section class="layout-grid">
+      <article class="panel"><header class="panel-header"><div><h2>Recent contact log</h2><p>Latest relationship history</p></div></header><div class="panel-body timeline" id="recentTimeline"></div></article>
+      <article class="panel"><header class="panel-header"><div><h2>Relationships going quiet</h2><p>Contacts with no touch in 60+ days</p></div></header><div class="panel-body" id="staleContacts"></div></article>
+    </section>`;
+  renderActivityChart(d.activity_by_day||[]);renderHealth(d.health||{});renderFollowUpCards(d.follow_ups||[],$('#dashboardFollowups'),5);renderTaskRows(d.tasks||[],$('#dashboardTasks'),5);renderTimeline(d.recent_activities||[],$('#recentTimeline'),false);
+  $('#staleContacts').innerHTML=(d.stale_contacts||[]).length?(d.stale_contacts||[]).map((c)=>`<button class="search-result" data-open-contact="${c.id}"><span><strong>${escapeHtml(`${c.first_name} ${c.last_name}`)}</strong><small>${c.last_contact_at?`Last contact ${relativeTime(c.last_contact_at)}`:'Never contacted'}</small></span>${healthBadge(c.relationship_score)}</button>`).join(''):empty('No stale relationships','Every active contact has recent engagement.');
+  $('#contactCount').textContent=d.counts.contacts||'';$('#taskCount').textContent=d.counts.overdue_tasks||'';$('#agendaCount').textContent=Number(d.counts.overdue_follow_ups||0)+Number(d.counts.follow_ups_today||0)||'';
+}
+function renderAccountDashboard(data){
+  const o=data.organization;const openDeals=(data.deals||[]).filter(d=>!['won','lost'].includes(d.stage));const openTasks=(data.tasks||[]).filter(t=>!['completed','cancelled'].includes(t.status));const openFollow=(data.follow_ups||[]).filter(f=>['open','snoozed'].includes(f.status));
+  $('#content').innerHTML=`${pageHeader('Focused account workspace',o.name,`${o.industry||titleCase(o.type)} · ${[o.city,o.country].filter(Boolean).join(', ')||'No market set'}`,`<button class="button secondary" data-quick="followup" data-organization-id="${o.id}">＋ Follow-up</button><button class="button primary" data-quick="activity" data-organization-id="${o.id}">＋ Log contact</button>`)}
+  <section class="callout" style="margin-bottom:16px"><strong>Account focus is active</strong>Every contacts, pipeline, task and contact-log screen is now filtered to ${escapeHtml(o.name)}. Use Clear in the top bar to return to the full database.</section>
+  <section class="metrics-grid">${[['Contacts',(data.contacts||[]).length,'Buying committee'],['Open pipeline',formatCurrency(openDeals.reduce((s,d)=>s+Number(d.value||0),0),currentWorkspace().currency),'Active opportunities'],['Follow-ups',openFollow.length,`${openFollow.filter(f=>dueBucket(f.snoozed_until||f.due_at)==='overdue').length} overdue`],['Open tasks',openTasks.length,`${openTasks.filter(t=>t.due_at&&new Date(t.due_at)<new Date()).length} overdue`],['Relationship',o.relationship_score,'Account health score']].map(([l,v,c])=>`<article class="metric-card"><span class="metric-label">${l}</span><strong class="metric-value">${v}</strong><span class="metric-caption">${c}</span></article>`).join('')}</section>
+  <section class="layout-grid"><article class="panel"><header class="panel-header"><div><h2>Account contact log</h2><p>Latest interactions across the whole account</p></div><button class="small-button" data-route-link="activity">Full log</button></header><div class="panel-body timeline" id="accountTimeline"></div></article><article class="panel"><header class="panel-header"><div><h2>Buying committee</h2><p>People connected to this account</p></div></header><div class="panel-body">${(data.contacts||[]).map(c=>`<button class="search-result" data-open-contact="${c.id}"><span><strong>${escapeHtml(`${c.first_name} ${c.last_name}`)}</strong><small>${escapeHtml(c.job_title||c.email||'')}</small></span>${healthBadge(c.relationship_score)}</button>`).join('')||empty('No contacts','Add the first person to this account.')}</div></article></section>
+  <section class="layout-grid"><article class="panel"><header class="panel-header"><div><h2>Follow-ups</h2><p>Next account actions</p></div></header><div class="panel-body" id="accountFollowups"></div></article><article class="panel"><header class="panel-header"><div><h2>Tasks</h2><p>Open account work</p></div></header><div class="panel-body" id="accountTasks"></div></article></section>`;
+  renderTimeline(data.activities||[],$('#accountTimeline'),true);renderFollowUpCards(openFollow,$('#accountFollowups'));renderTaskRows(openTasks,$('#accountTasks'));
 }
 
-function renderActivityChart(rows) {
-  const max = Math.max(1, ...rows.map((row) => Number(row.count || 0)));
-  $('#activityChart').innerHTML = rows.map((row) => {
-    const date = new Date(`${row.day}T12:00:00`);
-    const day = date.toLocaleDateString('en-GB', { weekday: 'narrow' });
-    const height = Math.max(4, Math.round(Number(row.count || 0) / max * 100));
-    return `<div class="chart-column"><div class="chart-bar-wrap"><div class="chart-bar" style="height:${height}%" data-value="${row.count}"></div></div><small>${day}<br>${date.getDate()}</small></div>`;
-  }).join('');
+function renderActivityChart(rows){const max=Math.max(1,...rows.map((r)=>Number(r.count||0)));$('#activityChart').innerHTML=rows.map((r)=>{const date=new Date(`${r.day}T12:00:00`);return `<div class="chart-column"><div class="chart-bar-wrap"><div class="chart-bar" style="height:${Math.max(3,Number(r.count||0)/max*100)}%" data-value="${r.count}"></div></div><small>${date.toLocaleDateString('en-GB',{weekday:'narrow'})}<br>${date.getDate()}</small></div>`;}).join('');}
+function renderHealth(health){const values=[Number(health.strong||0),Number(health.healthy||0),Number(health.needs_attention||0),Number(health.at_risk||0)];const total=values.reduce((a,b)=>a+b,0)||1;const colors=['var(--green)','var(--primary)','var(--amber)','var(--red)'];let cursor=0;const stops=values.map((v,i)=>{const start=cursor;cursor+=v/total*100;return`${colors[i]} ${start}% ${cursor}%`;});$('#healthDonut').style.background=`conic-gradient(${stops.join(',')})`;$('#healthAverage').textContent=Math.round((values[0]*90+values[1]*68+values[2]*45+values[3]*22)/total);$('#healthLegend').innerHTML=['Strong','Healthy','Needs attention','At risk'].map((l,i)=>`<div class="legend-row"><i class="legend-dot" style="--legend-color:${colors[i]}"></i><span>${l}</span><strong>${values[i]}</strong></div>`).join('');}
+
+async function renderAgenda(){
+  state.agenda=await api('/api/agenda');const follow=state.agenda.follow_ups||[];const tasks=state.agenda.tasks||[];const all=[...follow.map((x)=>({...x,kind:'followup',due:x.effective_due_at||x.due_at})),...tasks.map((x)=>({...x,kind:'task',due:x.due_at}))];
+  const groups={overdue:[],today:[],upcoming:[],later:[]};all.forEach((item)=>groups[dueBucket(item.due)]?.push(item));
+  const show=(bucket)=>state.agendaBucket==='all'||state.agendaBucket===bucket;
+  $('#content').innerHTML=`${pageHeader('Daily work center','My Day','A single prioritized view of every follow-up and task requiring your attention.',`<button class="button secondary" data-quick="task">＋ Task</button><button class="button primary" data-quick="followup">＋ Follow-up</button>`)}
+    <section class="agenda-summary">${[['all',all.length,'All open work'],['overdue',groups.overdue.length,'Overdue'],['today',groups.today.length,'Due today'],['upcoming',groups.upcoming.length,'Next 7 days']].map(([key,count,label])=>`<button class="${state.agendaBucket===key?'active':''}" data-agenda-bucket="${key}"><small>${label}</small><strong>${count}</strong></button>`).join('')}</section>
+    <section class="agenda-columns">
+      ${show('overdue')?agendaColumn('Overdue','Needs immediate attention',groups.overdue,'overdue'):''}
+      ${show('today')?agendaColumn('Today','Scheduled for today',groups.today,'today'):''}
+      ${show('upcoming')?agendaColumn('Upcoming','The next seven days',groups.upcoming,'upcoming'):''}
+      ${state.agendaBucket==='all'&&groups.later.length?agendaColumn('Later','Beyond the next week',groups.later,'upcoming'):''}
+    </section>`;
+}
+function agendaColumn(title,subtitle,items,bucket){return `<article class="agenda-column"><header><div><h3>${title}</h3><span>${subtitle}</span></div><strong>${items.length}</strong></header>${items.length?items.map((item)=>workCard(item,bucket)).join(''):empty('Nothing here','This queue is clear.')}</article>`;}
+function workCard(item,bucket){const follow=item.kind==='followup';return `<article class="work-card ${bucket}"><div class="work-card-header"><strong>${escapeHtml(item.title)}</strong>${priorityBadge(item.priority)}</div><p>${escapeHtml(item.contact_name||item.organization_name||item.deal_name||'General work item')}</p><div class="work-card-meta"><span class="badge ${follow?'primary':'blue'}">${follow?titleCase(item.channel):titleCase(item.task_type)}</span><span class="badge">${formatDate(item.due,true)}</span>${item.owner_name||item.assignee_name?`<span class="badge">${escapeHtml(item.owner_name||item.assignee_name)}</span>`:''}</div><div class="work-card-actions">${follow?`<button class="primary-action" data-complete-followup="${item.id}">Complete & log</button><button data-snooze-followup="${item.id}">Snooze</button><button data-edit-followup="${item.id}">Edit</button>`:`<button class="primary-action" data-complete-task="${item.id}">Complete</button><button data-edit-task="${item.id}">Edit</button>`}</div></article>`;}
+
+async function renderContacts(){
+  const params=new URLSearchParams({page:state.contacts.page,pageSize:state.contacts.pageSize,sort:state.contacts.sort});if(state.contacts.q)params.set('q',state.contacts.q);if(state.contacts.stage)params.set('stage',state.contacts.stage);if(state.contacts.health)params.set('health',state.contacts.health);if(state.accountId)params.set('account',state.accountId);
+  const result=await api(`/api/contacts?${params}`);state.contacts={...state.contacts,...result};
+  $('#content').innerHTML=`${pageHeader('People & relationships','Contacts',state.accountId?`Showing people at ${selectedAccount()?.name||'the selected account'}.`:'Manage every person, relationship, permission and next action.',`<button class="button primary" data-quick="contact">＋ Contact</button>`)}
+    <section class="panel"><div class="toolbar"><input class="search-input" id="contactSearch" value="${escapeHtml(state.contacts.q)}" placeholder="Search name, email, title or account…"><select id="contactStage"><option value="">All lifecycle stages</option>${['lead','qualified','opportunity','customer','partner','inactive'].map((s)=>`<option value="${s}" ${state.contacts.stage===s?'selected':''}>${titleCase(s)}</option>`).join('')}</select><select id="contactHealth"><option value="">All health</option><option value="at_risk" ${state.contacts.health==='at_risk'?'selected':''}>At risk</option><option value="attention" ${state.contacts.health==='attention'?'selected':''}>Needs attention</option><option value="healthy" ${state.contacts.health==='healthy'?'selected':''}>Healthy</option></select><select id="contactSort"><option value="last_contact">Last contact</option><option value="follow_up">Next follow-up</option><option value="score">Relationship score</option><option value="name">Name</option><option value="organization">Account</option></select></div>
+      <div class="table-wrap"><table><thead><tr><th>Contact</th><th>Account</th><th>Lifecycle</th><th>Health</th><th>Last contact</th><th>Next follow-up</th><th>Open work</th><th></th></tr></thead><tbody>${state.contacts.items.length?state.contacts.items.map(contactRow).join(''):`<tr><td colspan="8">${empty('No contacts match','Change the filters or create a new contact.')}</td></tr>`}</tbody></table></div>
+      <footer class="panel-footer" style="display:flex;justify-content:space-between;align-items:center"><span style="color:var(--muted);font-size:10px">${state.contacts.total} contacts · Page ${state.contacts.page} of ${state.contacts.pages}</span><div><button class="small-button" data-contact-page="${Math.max(1,state.contacts.page-1)}" ${state.contacts.page<=1?'disabled':''}>Previous</button> <button class="small-button" data-contact-page="${Math.min(state.contacts.pages,state.contacts.page+1)}" ${state.contacts.page>=state.contacts.pages?'disabled':''}>Next</button></div></footer>
+    </section>`;
+  $('#contactSort').value=state.contacts.sort;
+}
+function contactRow(c){return `<tr><td><button class="row-action table-primary" data-open-contact="${c.id}"><span class="mini-avatar">${initials(c.first_name,c.last_name)}</span><span><strong>${escapeHtml(`${c.first_name} ${c.last_name}`)}</strong><small>${escapeHtml(c.job_title||c.email||'No title')}</small></span></button></td><td>${escapeHtml(c.organization_name||'—')}</td><td><span class="badge blue">${titleCase(c.lifecycle_stage)}</span></td><td><div style="display:flex;align-items:center;gap:7px">${healthBadge(c.relationship_score)}<small>${c.relationship_score}</small></div></td><td>${relativeTime(c.last_contact_at)}</td><td><span class="${dueBucket(c.next_follow_up_at)==='overdue'?'badge red':''}">${c.next_follow_up_at?formatDate(c.next_follow_up_at,true):'—'}</span></td><td><span class="badge">${Number(c.open_follow_ups||0)} follow-up</span> <span class="badge">${Number(c.open_tasks||0)} task</span></td><td><button class="row-action" data-open-contact="${c.id}">Open</button></td></tr>`;}
+
+async function renderOrganizations(){
+  state.organizations=await api('/api/organizations');$('#accountSwitcher').innerHTML=optionList(state.organizations,'id',(o)=>o.name,state.accountId,'All accounts');
+  $('#content').innerHTML=`${pageHeader('Company intelligence','Accounts','Switch accounts instantly, understand every relationship and keep the whole buying committee visible.',`<button class="button primary" data-quick="organization">＋ Account</button>`)}
+  <section class="panel"><div class="toolbar"><input class="search-input" id="organizationSearch" placeholder="Search accounts, industries or markets…"><div class="segmented" id="accountTierFilter"><button class="active" data-account-tier="">All</button><button data-account-tier="strategic">Strategic</button><button data-account-tier="key">Key</button><button data-account-tier="standard">Standard</button></div></div><div class="table-wrap"><table><thead><tr><th>Account</th><th>Type</th><th>Tier</th><th>Market</th><th>Contacts</th><th>Pipeline</th><th>Open work</th><th></th></tr></thead><tbody id="organizationRows">${state.organizations.map(organizationRow).join('')}</tbody></table></div></section>`;
+}
+function organizationRow(o){return `<tr data-organization-row data-tier="${escapeHtml(o.account_tier||'standard')}" data-search="${escapeHtml(`${o.name} ${o.industry||''} ${o.country||''}`.toLowerCase())}"><td><button class="row-action table-primary" data-open-organization="${o.id}"><span class="mini-avatar">${initials(o.name)}</span><span><strong>${escapeHtml(o.name)}</strong><small>${escapeHtml(o.industry||o.domain||'No industry')}</small></span></button></td><td><span class="badge">${titleCase(o.type)}</span></td><td><span class="badge ${o.account_tier==='strategic'?'purple':o.account_tier==='key'?'primary':''}">${titleCase(o.account_tier)}</span></td><td>${escapeHtml([o.city,o.country].filter(Boolean).join(', ')||'—')}</td><td>${o.contact_count||0}</td><td>${formatCurrency(o.pipeline_value,currentWorkspace().currency)}</td><td><span class="badge">${o.open_follow_ups||0} follow-up</span> <span class="badge">${o.open_tasks||0} task</span></td><td><button class="row-action" data-select-account="${o.id}">Focus</button></td></tr>`;}
+
+async function renderActivityLog(){
+  const params=new URLSearchParams({limit:200});if(state.activityFilters.q)params.set('q',state.activityFilters.q);if(state.activityFilters.type)params.set('type',state.activityFilters.type);if(state.activityFilters.contact)params.set('contact',state.activityFilters.contact);if(state.accountId)params.set('account',state.accountId);state.activities=await api(`/api/activities?${params}`);
+  $('#content').innerHTML=`${pageHeader('Complete relationship history','Contact Log','A chronological, searchable audit trail of calls, emails, meetings, notes, messages and outcomes.',`<button class="button primary" data-quick="activity">＋ Log contact</button>`)}
+  <section class="panel"><div class="toolbar activity-filters"><input class="search-input" id="activitySearch" value="${escapeHtml(state.activityFilters.q)}" placeholder="Search subjects, notes and outcomes…"><select id="activityType"><option value="">All activity types</option>${['email','call','meeting','whatsapp','linkedin','note','file','other'].map((t)=>`<option value="${t}" ${state.activityFilters.type===t?'selected':''}>${titleCase(t)}</option>`).join('')}</select><select id="activityContact">${optionList(state.contacts.items,'id',(c)=>`${c.first_name} ${c.last_name}`,state.activityFilters.contact,'All contacts')}</select><button class="button secondary" id="clearActivityFilters">Clear</button></div><div class="panel-body timeline" id="activityTimeline">${state.activities.length?'':empty('No contact history','Log the first relationship interaction.')}</div></section>`;
+  if(state.activities.length)renderTimeline(state.activities,$('#activityTimeline'),true);
+}
+function renderTimeline(activities,root,expanded=false){root.innerHTML=activities.map((a)=>`<article class="timeline-item"><div class="timeline-icon">${icons[a.type]||icons.other}</div><div class="timeline-copy"><strong>${escapeHtml(a.subject)}</strong><p>${escapeHtml(a.contact_name||a.organization_name||a.user_name||'Internal')}${a.outcome?` · ${escapeHtml(a.outcome)}`:''}${a.sentiment?` · ${titleCase(a.sentiment)}`:''}</p>${expanded&&a.body?`<p class="activity-body">${escapeHtml(a.body)}</p>`:''}${expanded&&a.next_step?`<p><strong>Next step:</strong> ${escapeHtml(a.next_step)}</p>`:''}</div><time class="timeline-time">${formatDate(a.occurred_at,true)}<br>${relativeTime(a.occurred_at)}</time></article>`).join('');}
+
+async function renderPipeline(){
+  state.deals=await api(`/api/deals${state.accountId?`?${accountQuery()}`:''}`);const currency=currentWorkspace().currency||'EUR';
+  $('#content').innerHTML=`${pageHeader('Commercial pipeline','Pipeline','Move opportunities from lead to close with clear ownership, next steps and forecast visibility.',`<button class="button primary" data-quick="deal">＋ Deal</button>`)}
+  <section class="metrics-grid">${[['Open pipeline',formatCurrency(state.deals.filter(d=>!['won','lost'].includes(d.stage)).reduce((s,d)=>s+Number(d.value||0),0),currency),'Active opportunity value'],['Weighted forecast',formatCurrency(state.deals.filter(d=>!['won','lost'].includes(d.stage)).reduce((s,d)=>s+Number(d.value||0)*Number(d.probability||0)/100,0),currency),'Probability adjusted'],['Won',formatCurrency(state.deals.filter(d=>d.stage==='won').reduce((s,d)=>s+Number(d.value||0),0),currency),'Closed revenue'],['Open deals',state.deals.filter(d=>!['won','lost'].includes(d.stage)).length,'Across all stages']].map(([label,value,caption])=>`<article class="metric-card"><span class="metric-label">${label}</span><strong class="metric-value">${value}</strong><span class="metric-caption">${caption}</span></article>`).join('')}</section>
+  <section class="kanban">${stageOrder.map((stage)=>{const deals=state.deals.filter((d)=>d.stage===stage);return `<article class="kanban-column"><header class="kanban-header"><strong>${titleCase(stage)}</strong><span>${deals.length} · ${formatCurrency(deals.reduce((s,d)=>s+Number(d.value||0),0),currency)}</span></header>${deals.map(dealCard).join('')||empty('No deals','')}</article>`;}).join('')}</section>`;
+}
+function dealCard(d){return `<button class="deal-card" data-edit-deal="${d.id}" style="width:100%;text-align:left"><h4>${escapeHtml(d.name)}</h4><p>${escapeHtml(d.organization_name||d.contact_name||'No account')}</p><strong class="deal-value">${formatCurrency(d.value,d.currency)}</strong><p>${d.next_step?`Next: ${escapeHtml(d.next_step)}`:`Close ${formatDate(d.expected_close_date)}`}</p><div class="deal-progress"><span style="width:${Number(d.probability||0)}%"></span></div></button>`;}
+
+async function renderTasks(){
+  const params=new URLSearchParams();if(state.taskFilters.status)params.set('status',state.taskFilters.status);if(state.taskFilters.type)params.set('type',state.taskFilters.type);if(state.taskFilters.assignee)params.set('assignee',state.taskFilters.assignee);if(state.accountId)params.set('account',state.accountId);state.tasks=await api(`/api/tasks?${params}`);
+  const open=state.tasks.filter((t)=>!['completed','cancelled'].includes(t.status));const overdue=open.filter((t)=>t.due_at&&new Date(t.due_at)<new Date()).length;const completed=state.tasks.filter((t)=>t.status==='completed').length;
+  $('#content').innerHTML=`${pageHeader('Execution & accountability','Tasks','Plan, prioritize and complete work with ownership, reminders, recurrence and CRM context.',`<button class="button primary" data-quick="task">＋ Task</button>`)}
+  <section class="agenda-summary"><button><small>Open</small><strong>${open.length}</strong></button><button><small>Overdue</small><strong>${overdue}</strong></button><button><small>Completed</small><strong>${completed}</strong></button><button><small>Urgent</small><strong>${open.filter(t=>t.priority==='urgent').length}</strong></button></section>
+  <section class="panel"><div class="toolbar"><select id="taskStatus"><option value="">All statuses</option>${['open','in_progress','completed','cancelled'].map((s)=>`<option value="${s}" ${state.taskFilters.status===s?'selected':''}>${titleCase(s)}</option>`).join('')}</select><select id="taskType"><option value="">All task types</option>${['task','call','email','meeting','admin','research','other'].map((t)=>`<option value="${t}" ${state.taskFilters.type===t?'selected':''}>${titleCase(t)}</option>`).join('')}</select><select id="taskAssignee">${optionList(state.users,'id',(u)=>u.name,state.taskFilters.assignee,'All assignees')}</select></div><div class="panel-body"><div class="task-list" id="taskList"></div></div></section>`;
+  renderTaskRows(state.tasks,$('#taskList'));
+}
+function renderTaskRows(tasks,root,limit=Infinity){const rows=tasks.slice(0,limit);root.innerHTML=rows.length?rows.map((t)=>`<article class="task-row ${t.status==='completed'?'completed':''}"><button class="task-check ${t.status==='completed'?'done':''}" data-complete-task="${t.id}" aria-label="${t.status==='completed'?'Completed':'Complete task'}">${t.status==='completed'?'✓':''}</button><div class="task-copy"><strong>${escapeHtml(t.title)}</strong><small>${escapeHtml(t.contact_name||t.organization_name||t.deal_name||t.description||'General task')}</small></div>${priorityBadge(t.priority)}<span class="badge blue">${titleCase(t.task_type)}</span><span class="task-due ${t.due_at&&new Date(t.due_at)<new Date()&&t.status!=='completed'?'overdue':''}">${t.due_at?formatDate(t.due_at,true):'No due date'}</span><button class="row-action" data-edit-task="${t.id}">Edit</button></article>`).join(''):empty('No tasks found','Create a task or change the filters.');}
+function renderFollowUpCards(items,root,limit=Infinity){const rows=items.slice(0,limit);root.innerHTML=rows.length?rows.map((f)=>`<article class="work-card ${dueBucket(f.effective_due_at||f.due_at)}"><div class="work-card-header"><strong>${escapeHtml(f.title)}</strong>${priorityBadge(f.priority)}</div><p>${escapeHtml(f.contact_name||f.organization_name||f.deal_name||'General follow-up')}</p><div class="work-card-meta"><span class="badge primary">${titleCase(f.channel)}</span><span class="badge">${formatDate(f.effective_due_at||f.due_at,true)}</span></div><div class="work-card-actions"><button class="primary-action" data-complete-followup="${f.id}">Complete & log</button><button data-snooze-followup="${f.id}">Snooze</button></div></article>`).join(''):empty('No follow-ups','Your relationship queue is clear.');}
+
+async function renderAnalytics(){
+  state.analytics=await api('/api/analytics');const a=state.analytics;const followRate=Number(a.follow_up_stats?.total||0)?Math.round(Number(a.follow_up_stats.completed||0)/Number(a.follow_up_stats.total)*100):0;const taskRate=Number(a.task_stats?.total||0)?Math.round(Number(a.task_stats.completed||0)/Number(a.task_stats.total)*100):0;
+  $('#content').innerHTML=`${pageHeader('Revenue & relationship intelligence','Analytics','Measure commercial activity, follow-up discipline, task execution, conversion and account performance.')}
+  <section class="metrics-grid">${[['Follow-up completion',`${followRate}%`,`${a.follow_up_stats?.overdue||0} overdue`],['Task completion',`${taskRate}%`,`${a.task_stats?.overdue||0} overdue`],['90-day activities',compactNumber((a.activity_types||[]).reduce((s,r)=>s+Number(r.count||0),0)),'Logged touchpoints'],['Active contributors',(a.users||[]).filter(u=>Number(u.activities)>0).length,'Team members']].map(([l,v,c])=>`<article class="metric-card"><span class="metric-label">${l}</span><strong class="metric-value">${v}</strong><span class="metric-caption">${c}</span></article>`).join('')}</section>
+  <section class="layout-grid equal"><article class="panel"><header class="panel-header"><div><h2>Activity mix</h2><p>Last 90 days</p></div></header><div class="panel-body horizontal-bars" id="activityMix"></div></article><article class="panel"><header class="panel-header"><div><h2>Pipeline conversion</h2><p>Deals by stage</p></div></header><div class="panel-body horizontal-bars" id="conversionBars"></div></article></section>
+  <section class="layout-grid equal"><article class="panel"><header class="panel-header"><div><h2>Team activity</h2><p>Last 30 days</p></div></header><div class="panel-body horizontal-bars" id="teamBars"></div></article><article class="panel"><header class="panel-header"><div><h2>Won revenue trend</h2><p>Last six months</p></div></header><div class="panel-body"><div class="chart" id="revenueChart"></div></div></article></section>
+  <section class="panel"><header class="panel-header"><div><h2>Top accounts</h2><p>Pipeline and engagement concentration</p></div></header><div class="table-wrap"><table><thead><tr><th>Account</th><th>Tier</th><th>Contacts</th><th>90-day activity</th><th>Pipeline</th><th>Health</th></tr></thead><tbody>${(a.top_accounts||[]).map((o)=>`<tr><td><button class="row-action" data-open-organization="${o.id}">${escapeHtml(o.name)}</button></td><td><span class="badge">${titleCase(o.account_tier)}</span></td><td>${o.contacts}</td><td>${o.activities}</td><td>${formatCurrency(o.pipeline,currentWorkspace().currency)}</td><td>${healthBadge(o.relationship_score)}</td></tr>`).join('')}</tbody></table></div></section>`;
+  renderBars($('#activityMix'),a.activity_types||[],'type','count');renderBars($('#conversionBars'),a.conversion||[],'stage','count');renderBars($('#teamBars'),a.users||[],'name','activities');renderRevenueChart(a.revenue_by_month||[]);
+}
+function renderBars(root,rows,labelKey,valueKey){const max=Math.max(1,...rows.map(r=>Number(r[valueKey]||0)));root.innerHTML=rows.length?rows.map(r=>`<div class="horizontal-bar-row"><label>${escapeHtml(titleCase(r[labelKey]))}</label><div class="bar-track"><span style="width:${Number(r[valueKey]||0)/max*100}%"></span></div><strong>${r[valueKey]}</strong></div>`).join(''):empty('No data yet','Activity will appear here.');}
+function renderRevenueChart(rows){const max=Math.max(1,...rows.map(r=>Number(r.won_value||0)));$('#revenueChart').innerHTML=rows.map(r=>`<div class="chart-column"><div class="chart-bar-wrap"><div class="chart-bar" style="height:${Math.max(3,Number(r.won_value||0)/max*100)}%" data-value="${formatCurrency(r.won_value,currentWorkspace().currency)}"></div></div><small>${new Date(`${r.month}T12:00:00`).toLocaleDateString('en-GB',{month:'short'})}</small></div>`).join('');}
+
+function renderData(){
+  $('#content').innerHTML=`${pageHeader('Data operations','Import & export','Move contacts between systems while preserving workspace isolation and data quality.')}
+  <section class="layout-grid equal"><article class="panel"><header class="panel-header"><div><h2>Import contacts</h2><p>Upload or paste a CSV file</p></div></header><div class="panel-body"><div class="callout"><strong>Supported fields</strong>first_name, last_name, email, phone, job_title, organization, lifecycle_stage, source, tags, notes and consent_status.</div><div class="field" style="margin-top:14px"><label for="csvFile">CSV file</label><input id="csvFile" type="file" accept=".csv,text/csv"></div><div class="field" style="margin-top:12px"><label for="csvText">Or paste CSV</label><textarea id="csvText" rows="10" placeholder="first_name,last_name,email,organization"></textarea></div><div class="form-actions"><button class="button primary" id="importContacts">Import contacts</button></div><div id="importResult"></div></div></article>
+  <article class="panel"><header class="panel-header"><div><h2>Export & database tools</h2><p>Portable workspace data</p></div></header><div class="panel-body"><button class="button secondary" id="exportContacts">Download contact CSV</button><hr style="border:0;border-top:1px solid var(--border);margin:18px 0"><h3>Current database</h3><div class="detail-grid" style="margin-top:12px"><div class="detail-field"><span>Workspace</span><strong>${escapeHtml(currentWorkspace().name)}</strong></div><div class="detail-field"><span>Currency</span><strong>${escapeHtml(currentWorkspace().currency)}</strong></div><div class="detail-field"><span>Timezone</span><strong>${escapeHtml(currentWorkspace().timezone)}</strong></div><div class="detail-field"><span>Access role</span><strong>${escapeHtml(currentWorkspace().member_role||state.me.user.role)}</strong></div></div><p style="color:var(--muted);margin-top:16px">Every import and export is scoped to the selected database. Switch workspaces from the sidebar to work with another isolated dataset.</p></div></article></section>`;
+}
+function renderSettings(){
+  const ws=currentWorkspace();
+  $('#content').innerHTML=`${pageHeader('Workspace administration','Settings','Manage the active CRM database, personal preferences and multi-account workflow.')}
+  <section class="layout-grid equal"><article class="panel"><header class="panel-header"><div><h2>Workspace profile</h2><p>Database identity and defaults</p></div></header><div class="panel-body"><form id="workspaceSettings"><div class="form-grid"><div class="field"><label>Name</label><input name="name" value="${escapeHtml(ws.name)}" required></div><div class="field"><label>Color</label><input name="color" type="color" value="${escapeHtml(ws.color||'#0f766e')}"></div><div class="field"><label>Currency</label><select name="currency">${['EUR','USD','SGD','IDR','AUD','INR','GBP'].map(c=>`<option ${ws.currency===c?'selected':''}>${c}</option>`).join('')}</select></div><div class="field"><label>Timezone</label><input name="timezone" value="${escapeHtml(ws.timezone||'Europe/Amsterdam')}"></div><div class="field full"><label>Description</label><textarea name="description">${escapeHtml(ws.description||'')}</textarea></div></div><div class="form-actions"><button class="button primary" ${state.me.permissions.can_admin?'':'disabled'}>Save workspace</button></div></form></div></article>
+  <article class="panel"><header class="panel-header"><div><h2>Database switching</h2><p>Logical separation with one secure login</p></div></header><div class="panel-body"><div class="callout"><strong>How it works</strong>Each workspace is a separate logical CRM database. Contacts, accounts, activities, tasks, deals, files and analytics are always isolated by workspace.</div><div style="margin-top:14px" class="task-list">${state.me.workspaces.map((w)=>`<button class="task-row" data-switch-workspace="${w.id}"><span class="workspace-dot" style="background:${escapeHtml(w.color||'#0f766e')}"></span><span class="task-copy"><strong>${escapeHtml(w.name)}</strong><small>${escapeHtml(w.description||w.slug)}</small></span><span class="badge ${w.id===state.workspaceId?'primary':''}">${w.id===state.workspaceId?'Active':'Switch'}</span></button>`).join('')}</div>${state.me.permissions.can_admin?`<button class="button secondary" style="margin-top:14px" data-quick="workspace">＋ Create another database</button>`:''}</div></article></section>
+  <section class="panel"><header class="panel-header"><div><h2>Team access</h2><p>People with access to this workspace</p></div></header><div class="table-wrap"><table><thead><tr><th>User</th><th>Email</th><th>Workspace role</th><th>Default database</th></tr></thead><tbody>${state.users.map((u)=>`<tr><td>${escapeHtml(u.name)}</td><td>${escapeHtml(u.email)}</td><td><span class="badge">${titleCase(u.role)}</span></td><td>${u.is_default?'Yes':'No'}</td></tr>`).join('')}</tbody></table></div></section>`;
 }
 
-function renderHealth(health) {
-  const values = [Number(health.strong || 0), Number(health.healthy || 0), Number(health.needs_attention || 0), Number(health.at_risk || 0)];
-  const total = values.reduce((sum, value) => sum + value, 0) || 1;
-  const colors = ['var(--green)', 'var(--primary)', 'var(--amber)', 'var(--red)'];
-  let cursor = 0;
-  const stops = values.map((value, index) => {
-    const start = cursor;
-    cursor += value / total * 100;
-    return `${colors[index]} ${start}% ${cursor}%`;
+async function openContactDrawer(contactId,tab='timeline'){
+  const data=await api(`/api/contacts/${contactId}`);state.activeRecord={type:'contact',id:contactId,data,tab};const c=data.contact;
+  $('#drawerEyebrow').textContent='Contact profile';$('#drawerTitle').textContent=`${c.first_name} ${c.last_name}`;$('#detailDrawer').hidden=false;
+  renderContactDrawer();
+}
+function renderContactDrawer(){const {data,tab}=state.activeRecord;const c=data.contact;const tabs=['timeline','follow-ups','tasks','deals','profile'];
+  $('#drawerBody').innerHTML=`<section class="drawer-hero"><span class="mini-avatar">${initials(c.first_name,c.last_name)}</span><div><h3>${escapeHtml(`${c.first_name} ${c.last_name}`)}</h3><p>${escapeHtml([c.job_title,c.organization_name].filter(Boolean).join(' · ')||c.email||'Contact')}</p><div style="margin-top:7px">${healthBadge(c.relationship_score)} <span class="badge">Score ${c.relationship_score}</span></div></div></section>
+  <div class="detail-actions"><button class="small-button" data-quick="activity" data-contact-id="${c.id}">Log contact</button><button class="small-button" data-quick="followup" data-contact-id="${c.id}">Follow-up</button><button class="small-button" data-quick="task" data-contact-id="${c.id}">Task</button><a class="small-button" style="display:grid;place-items:center;text-decoration:none" href="mailto:${escapeHtml(c.email||'')}">Email</a><button class="small-button" data-edit-contact="${c.id}">Edit</button></div>
+  <nav class="detail-tabs">${tabs.map(t=>`<button class="${tab===t?'active':''}" data-contact-tab="${t}">${titleCase(t)}</button>`).join('')}</nav><div id="contactTabBody"></div>`;
+  const root=$('#contactTabBody');if(tab==='timeline')renderTimeline(data.activities||[],root,true);else if(tab==='follow-ups')renderFollowUpCards(data.follow_ups||[],root);else if(tab==='tasks')renderTaskRows(data.tasks||[],root);else if(tab==='deals')root.innerHTML=(data.deals||[]).length?data.deals.map(dealCard).join(''):empty('No deals','Create a deal linked to this contact.');else root.innerHTML=`<div class="detail-grid">${[['Email',c.email],['Phone',c.phone||c.mobile],['Preferred channel',titleCase(c.preferred_channel)],['Lifecycle',titleCase(c.lifecycle_stage)],['Consent',titleCase(c.consent_status)],['Owner',c.owner_name],['Last contact',formatDate(c.last_contact_at,true)],['Next follow-up',formatDate(c.next_follow_up_at,true)],['Source',c.source],['Language',c.preferred_language]].map(([l,v])=>`<div class="detail-field"><span>${l}</span><strong>${escapeHtml(v||'—')}</strong></div>`).join('')}</div>${c.notes?`<div class="panel" style="margin-top:14px"><div class="panel-body"><strong>Notes</strong><p style="white-space:pre-wrap;color:var(--muted)">${escapeHtml(c.notes)}</p></div></div>`:''}`;
+}
+async function openOrganizationDrawer(orgId,tab='contacts'){const data=await api(`/api/organizations/${orgId}`);state.activeRecord={type:'organization',id:orgId,data,tab};const o=data.organization;$('#drawerEyebrow').textContent='Account profile';$('#drawerTitle').textContent=o.name;$('#detailDrawer').hidden=false;renderOrganizationDrawer();}
+function renderOrganizationDrawer(){const {data,tab}=state.activeRecord;const o=data.organization;const tabs=['contacts','timeline','follow-ups','tasks','deals','profile'];$('#drawerBody').innerHTML=`<section class="drawer-hero"><span class="mini-avatar">${initials(o.name)}</span><div><h3>${escapeHtml(o.name)}</h3><p>${escapeHtml([o.industry,o.country].filter(Boolean).join(' · ')||o.type)}</p><div style="margin-top:7px"><span class="badge purple">${titleCase(o.account_tier)}</span> ${healthBadge(o.relationship_score)}</div></div></section><div class="detail-actions"><button class="small-button" data-select-account="${o.id}">Focus account</button><button class="small-button" data-quick="activity" data-organization-id="${o.id}">Log contact</button><button class="small-button" data-quick="followup" data-organization-id="${o.id}">Follow-up</button><button class="small-button" data-quick="task" data-organization-id="${o.id}">Task</button></div><nav class="detail-tabs">${tabs.map(t=>`<button class="${tab===t?'active':''}" data-organization-tab="${t}">${titleCase(t)}</button>`).join('')}</nav><div id="organizationTabBody"></div>`;const root=$('#organizationTabBody');if(tab==='contacts')root.innerHTML=(data.contacts||[]).length?`<div class="task-list">${data.contacts.map(c=>`<button class="task-row" data-open-contact="${c.id}"><span class="mini-avatar">${initials(c.first_name,c.last_name)}</span><span class="task-copy"><strong>${escapeHtml(`${c.first_name} ${c.last_name}`)}</strong><small>${escapeHtml(c.job_title||c.email||'')}</small></span>${healthBadge(c.relationship_score)}</button>`).join('')}</div>`:empty('No contacts','Add people to this account.');else if(tab==='timeline')renderTimeline(data.activities||[],root,true);else if(tab==='follow-ups')renderFollowUpCards(data.follow_ups||[],root);else if(tab==='tasks')renderTaskRows(data.tasks||[],root);else if(tab==='deals')root.innerHTML=(data.deals||[]).length?data.deals.map(dealCard).join(''):empty('No deals','');else root.innerHTML=`<div class="detail-grid">${[['Website',o.website],['Phone',o.phone],['Type',titleCase(o.type)],['Tier',titleCase(o.account_tier)],['Territory',o.territory],['Owner',o.owner_name],['Annual value',formatCurrency(o.annual_value,currentWorkspace().currency)],['Employees',o.employee_count],['Last contact',formatDate(o.last_contact_at,true)],['Next follow-up',formatDate(o.next_follow_up_at,true)]].map(([l,v])=>`<div class="detail-field"><span>${l}</span><strong>${escapeHtml(v||'—')}</strong></div>`).join('')}</div>`;}
+
+function openModal({eyebrow='Create',title,body,onSubmit}){$('#modalEyebrow').textContent=eyebrow;$('#modalTitle').textContent=title;$('#modalBody').innerHTML=body;$('#modalBackdrop').hidden=false;const form=$('form',$('#modalBody'));if(form&&onSubmit)form.addEventListener('submit',async(event)=>{event.preventDefault();const submit=$('[type="submit"]',form);if(submit)submit.disabled=true;try{await onSubmit(Object.fromEntries(new FormData(form)));closeModal();await refreshCurrent();}catch(error){toast('Unable to save',error.message,'error');if(submit)submit.disabled=false;}});setTimeout(()=>$('input,select,textarea',$('#modalBody'))?.focus(),50);}
+function closeModal(){$('#modalBackdrop').hidden=true;$('#modalBody').innerHTML='';}
+function closeDrawer(){$('#detailDrawer').hidden=true;state.activeRecord=null;}
+function contextDefaults(trigger){return{contact_id:trigger?.dataset.contactId||(state.activeRecord?.type==='contact'?state.activeRecord.id:''),organization_id:trigger?.dataset.organizationId||(state.activeRecord?.type==='organization'?state.activeRecord.id:(state.accountId||''))};}
+function field(label,name,type='text',value='',options='',extra=''){return `<div class="field ${extra}"><label for="f-${name}">${escapeHtml(label)}</label>${type==='textarea'?`<textarea id="f-${name}" name="${name}">${escapeHtml(value)}</textarea>`:type==='select'?`<select id="f-${name}" name="${name}">${options}</select>`:`<input id="f-${name}" name="${name}" type="${type}" value="${escapeHtml(value)}">`}</div>`;}
+function formActions(label='Save'){return `<div class="form-actions"><button class="button secondary" type="button" data-close-modal>Cancel</button><button class="button primary" type="submit">${escapeHtml(label)}</button></div>`;}
+function contactOptions(selected=''){return optionList(state.contacts.items,'id',(c)=>`${c.first_name} ${c.last_name}`,selected,'No contact');}
+function accountOptions(selected=''){return optionList(state.organizations,'id',(o)=>o.name,selected,'No account');}
+function userOptions(selected=''){return optionList(state.users,'id',(u)=>u.name,selected||state.me.user.id,'Unassigned');}
+function dealOptions(selected=''){return optionList(state.deals,'id',(d)=>d.name,selected,'No deal');}
+
+async function quickCreate(type,trigger){const defaults=contextDefaults(trigger);if(!state.contacts.items.length){try{const c=await api('/api/contacts?pageSize=100');state.contacts={...state.contacts,...c};}catch{}}
+  if(type==='activity')openActivityModal(defaults);else if(type==='followup')openFollowUpModal(null,defaults);else if(type==='task')openTaskModal(null,defaults);else if(type==='contact')openContactModal();else if(type==='organization')openOrganizationModal();else if(type==='deal')openDealModal();else if(type==='workspace')openWorkspaceModal();
+}
+function openActivityModal(defaults={}){const now=localInputDate(new Date());openModal({title:'Log contact',eyebrow:'Relationship history',body:`<form><div class="form-grid three">${field('Type','type','select','', ['email','call','meeting','whatsapp','linkedin','note','other'].map(v=>`<option value="${v}">${titleCase(v)}</option>`).join(''))}${field('Direction','direction','select','', ['outbound','inbound','internal'].map(v=>`<option value="${v}">${titleCase(v)}</option>`).join(''))}${field('Occurred at','occurred_at','datetime-local',now)}${field('Contact','contact_id','select','',contactOptions(defaults.contact_id))}${field('Account','organization_id','select','',accountOptions(defaults.organization_id))}${field('Deal','deal_id','select','',dealOptions(defaults.deal_id))}${field('Subject','subject','text','','','full')}${field('Notes / summary','body','textarea','','','full')}${field('Outcome','outcome')}${field('Sentiment','sentiment','select','',`<option value="">Not set</option><option>positive</option><option>neutral</option><option>negative</option>`)}${field('Next step','next_step')}${field('Next follow-up','follow_up_due_at','datetime-local','')}<div class="field"><label>Create follow-up</label><div class="checkbox-row"><input id="createFollowup" name="create_follow_up" type="checkbox" value="1"><label for="createFollowup" style="margin:0;text-transform:none">Add this next step to My Day</label></div></div></div>${formActions('Save contact log')}</form>`,onSubmit:async(data)=>{const create=data.create_follow_up?{title:data.next_step||`Follow up: ${data.subject}`,channel:data.type==='note'?'email':data.type,priority:'medium'}:null;delete data.create_follow_up;await api('/api/activities',{method:'POST',body:{...data,create_follow_up:create}});toast('Contact logged','The interaction is now part of the relationship history.');}});}
+function openFollowUpModal(record=null,defaults={}){const due=localInputDate(record?.effective_due_at||record?.due_at||new Date(Date.now()+86400000));openModal({title:record?'Edit follow-up':'New follow-up',eyebrow:'Next relationship action',body:`<form><div class="form-grid three">${field('Title','title','text',record?.title||'','','full')}${field('Contact','contact_id','select','',contactOptions(record?.contact_id||defaults.contact_id))}${field('Account','organization_id','select','',accountOptions(record?.organization_id||defaults.organization_id))}${field('Deal','deal_id','select','',dealOptions(record?.deal_id||defaults.deal_id))}${field('Channel','channel','select','', ['email','call','meeting','whatsapp','linkedin','other'].map(v=>`<option value="${v}" ${record?.channel===v?'selected':''}>${titleCase(v)}</option>`).join(''))}${field('Owner','owner_id','select','',userOptions(record?.owner_id))}${field('Due date','due_at','datetime-local',due)}${field('Priority','priority','select','', ['low','medium','high','urgent'].map(v=>`<option value="${v}" ${record?.priority===v?'selected':''}>${titleCase(v)}</option>`).join(''))}${field('Repeat','cadence','select','', ['none','daily','weekly','monthly','quarterly'].map(v=>`<option value="${v}" ${record?.cadence===v?'selected':''}>${titleCase(v)}</option>`).join(''))}${field('Notes','notes','textarea',record?.notes||'','','full')}</div>${formActions(record?'Update follow-up':'Schedule follow-up')}</form>`,onSubmit:async(data)=>{await api(record?`/api/follow-ups/${record.id}`:'/api/follow-ups',{method:record?'PATCH':'POST',body:data});toast(record?'Follow-up updated':'Follow-up scheduled','It is now visible in My Day.');}});}
+function openTaskModal(record=null,defaults={}){openModal({title:record?'Edit task':'New task',eyebrow:'To-do list',body:`<form><div class="form-grid three">${field('Task title','title','text',record?.title||'','','full')}${field('Type','task_type','select','', ['task','call','email','meeting','admin','research','other'].map(v=>`<option value="${v}" ${record?.task_type===v?'selected':''}>${titleCase(v)}</option>`).join(''))}${field('Priority','priority','select','', ['low','medium','high','urgent'].map(v=>`<option value="${v}" ${record?.priority===v?'selected':''}>${titleCase(v)}</option>`).join(''))}${field('Assignee','assignee_id','select','',userOptions(record?.assignee_id))}${field('Contact','contact_id','select','',contactOptions(record?.contact_id||defaults.contact_id))}${field('Account','organization_id','select','',accountOptions(record?.organization_id||defaults.organization_id))}${field('Deal','deal_id','select','',dealOptions(record?.deal_id||defaults.deal_id))}${field('Start','start_at','datetime-local',localInputDate(record?.start_at||new Date()))}${field('Due','due_at','datetime-local',localInputDate(record?.due_at||new Date(Date.now()+86400000)))}${field('Reminder','reminder_at','datetime-local',record?.reminder_at?localInputDate(record.reminder_at):'')}${field('Repeat','recurring_rule','select','', ['none','daily','weekly','monthly','quarterly'].map(v=>`<option value="${v}" ${record?.recurring_rule===v?'selected':''}>${titleCase(v)}</option>`).join(''))}${field('Estimated minutes','estimated_minutes','number',record?.estimated_minutes||'')}${field('Description','description','textarea',record?.description||'','','full')}</div>${formActions(record?'Update task':'Create task')}</form>`,onSubmit:async(data)=>{await api(record?`/api/tasks/${record.id}`:'/api/tasks',{method:record?'PATCH':'POST',body:data});toast(record?'Task updated':'Task created','The task is now in the work queue.');}});}
+function openContactModal(record=null){openModal({title:record?'Edit contact':'New contact',eyebrow:'Person record',body:`<form><div class="form-grid three">${field('First name','first_name','text',record?.first_name||'')}${field('Last name','last_name','text',record?.last_name||'')}${field('Job title','job_title','text',record?.job_title||'')}${field('Account','organization_id','select','',accountOptions(record?.organization_id||state.accountId))}${field('Email','email','email',record?.email||'')}${field('Phone','phone','tel',record?.phone||'')}${field('Lifecycle','lifecycle_stage','select','', ['lead','qualified','opportunity','customer','partner','inactive'].map(v=>`<option value="${v}" ${record?.lifecycle_stage===v?'selected':''}>${titleCase(v)}</option>`).join(''))}${field('Owner','owner_id','select','',userOptions(record?.owner_id))}${field('Preferred channel','preferred_channel','select','', ['email','phone','whatsapp','linkedin','meeting','other'].map(v=>`<option value="${v}" ${record?.preferred_channel===v?'selected':''}>${titleCase(v)}</option>`).join(''))}${field('Consent status','consent_status','select','', ['unknown','legitimate_interest','consented','withdrawn'].map(v=>`<option value="${v}" ${record?.consent_status===v?'selected':''}>${titleCase(v)}</option>`).join(''))}${field('Source','source','text',record?.source||'')}${field('Tags','tags','text',Array.isArray(record?.tags)?record.tags.join(', '):'')}${field('Notes','notes','textarea',record?.notes||'','','full')}</div>${formActions(record?'Update contact':'Create contact')}</form>`,onSubmit:async(data)=>{await api(record?`/api/contacts/${record.id}`:'/api/contacts',{method:record?'PATCH':'POST',body:{...data,tags:String(data.tags||'').split(',')}});toast(record?'Contact updated':'Contact created');}});}
+function openOrganizationModal(){openModal({title:'New account',eyebrow:'Company record',body:`<form><div class="form-grid three">${field('Account name','name','text','','','full')}${field('Type','type','select','', ['prospect','client','partner','investor','supplier','other'].map(v=>`<option value="${v}">${titleCase(v)}</option>`).join(''))}${field('Tier','account_tier','select','', ['strategic','key','standard','watchlist'].map(v=>`<option value="${v}">${titleCase(v)}</option>`).join(''))}${field('Industry','industry')}${field('Country','country')}${field('City','city')}${field('Website','website','url')}${field('LinkedIn','linkedin_url','url')}${field('Owner','owner_id','select','',userOptions())}${field('Territory','territory')}${field('Annual value','annual_value','number')}${field('Tags','tags')}${field('Description','description','textarea','','','full')}</div>${formActions('Create account')}</form>`,onSubmit:async(data)=>{await api('/api/organizations',{method:'POST',body:{...data,tags:String(data.tags||'').split(',')}});toast('Account created');await loadReferenceData();}});}
+function openDealModal(record=null){openModal({title:record?'Edit deal':'New deal',eyebrow:'Commercial opportunity',body:`<form><div class="form-grid three">${field('Deal name','name','text',record?.name||'','','full')}${field('Account','organization_id','select','',accountOptions(record?.organization_id||state.accountId))}${field('Primary contact','primary_contact_id','select','',contactOptions(record?.primary_contact_id))}${field('Owner','owner_id','select','',userOptions(record?.owner_id))}${field('Stage','stage','select','', stageOrder.map(v=>`<option value="${v}" ${record?.stage===v?'selected':''}>${titleCase(v)}</option>`).join(''))}${field('Probability','probability','number',record?.probability??10)}${field('Value','value','number',record?.value||0)}${field('Currency','currency','select','', ['EUR','USD','SGD','IDR','AUD','INR','GBP'].map(v=>`<option ${record?.currency===v||(!record&&currentWorkspace().currency===v)?'selected':''}>${v}</option>`).join(''))}${field('Expected close','expected_close_date','date',record?.expected_close_date?.slice(0,10)||'')}${field('Next step','next_step','text',record?.next_step||'','','full')}${field('Description','description','textarea',record?.description||'','','full')}</div>${formActions(record?'Update deal':'Create deal')}</form>`,onSubmit:async(data)=>{await api(record?`/api/deals/${record.id}`:'/api/deals',{method:record?'PATCH':'POST',body:data});toast(record?'Deal updated':'Deal created');}});}
+function openWorkspaceModal(){openModal({title:'Create CRM database',eyebrow:'New workspace',body:`<form><div class="form-grid">${field('Workspace name','name')}${field('Currency','currency','select','', ['EUR','USD','SGD','IDR','AUD','INR','GBP'].map(v=>`<option>${v}</option>`).join(''))}${field('Timezone','timezone','text','Europe/Amsterdam')}${field('Color','color','color','#0f766e')}${field('Description','description','textarea','','','full')}</div>${formActions('Create database')}</form>`,onSubmit:async(data)=>{const ws=await api('/api/workspaces',{method:'POST',body:data});state.workspaceId=ws.id;localStorage.setItem('pmg-workspace',ws.id);state.me=await api('/api/me');renderIdentity();await loadReferenceData();toast('Database created',`${ws.name} is ready.`);}});}
+function openSnoozeModal(followUp){openModal({title:'Snooze follow-up',eyebrow:'Reschedule',body:`<form>${field('Resume on','until','datetime-local',localInputDate(new Date(Date.now()+86400000)))}${formActions('Snooze')}</form>`,onSubmit:async(data)=>{await api(`/api/follow-ups/${followUp.id}/snooze`,{method:'POST',body:data});toast('Follow-up snoozed');}});}
+function openCompleteFollowUpModal(followUp){openModal({title:'Complete follow-up',eyebrow:'Close the loop',body:`<form><div class="form-grid">${field('Interaction type','type','select','', ['email','call','meeting','whatsapp','linkedin','note'].map(v=>`<option value="${v}" ${followUp.channel===v?'selected':''}>${titleCase(v)}</option>`).join(''))}${field('Outcome','outcome')}${field('Contact log subject','subject','text',followUp.title,'','full')}${field('Notes','body','textarea','','','full')}${field('Sentiment','sentiment','select','',`<option value="">Not set</option><option>positive</option><option>neutral</option><option>negative</option>`)}${field('Next step','next_step')}</div>${formActions('Complete and log')}</form>`,onSubmit:async(data)=>{await api(`/api/follow-ups/${followUp.id}/complete`,{method:'POST',body:{log_activity:{...data,direction:'outbound',occurred_at:new Date().toISOString()}}});toast('Follow-up completed','The contact log was updated at the same time.');}});}
+
+async function refreshCurrent(){state.dashboard=null;await loadReferenceData();await renderRoute();if(state.activeRecord){if(state.activeRecord.type==='contact')await openContactDrawer(state.activeRecord.id,state.activeRecord.tab);else await openOrganizationDrawer(state.activeRecord.id,state.activeRecord.tab);}}
+function switchAccount(id){state.accountId=id||'';if(state.accountId)localStorage.setItem('pmg-account',state.accountId);else localStorage.removeItem('pmg-account');$('#accountSwitcher').value=state.accountId;$('#clearAccountFilter').hidden=!state.accountId;toast(state.accountId?'Account focus enabled':'Account focus cleared',state.accountId?`Showing ${selectedAccount()?.name||'selected account'} across the CRM.`:'All accounts are visible.');renderRoute();}
+async function switchWorkspace(id){if(!id||id===state.workspaceId)return;state.workspaceId=id;state.accountId='';localStorage.setItem('pmg-workspace',id);localStorage.removeItem('pmg-account');state.me=await api('/api/me');renderIdentity();await loadReferenceData();closeDrawer();toast('Database switched',`Now working in ${currentWorkspace().name}.`);navigate('dashboard');}
+
+function bindGlobalEvents(){
+  window.addEventListener('hashchange',()=>navigate(location.hash.slice(1)));
+  document.addEventListener('click',async(event)=>{
+    const target=event.target.closest('button,a');if(!target)return;
+    if(target.matches('[data-route]'))navigate(target.dataset.route);
+    if(target.matches('[data-route-link]'))navigate(target.dataset.routeLink);
+    if(target.matches('[data-quick]'))await quickCreate(target.dataset.quick,target);
+    if(target.matches('[data-close-modal]'))closeModal();
+    if(target.matches('[data-retry]'))renderRoute();
+    if(target.matches('[data-open-contact]'))await openContactDrawer(target.dataset.openContact);
+    if(target.matches('[data-open-organization]'))await openOrganizationDrawer(target.dataset.openOrganization);
+    if(target.matches('[data-select-account]')){switchAccount(target.dataset.selectAccount);closeDrawer();}
+    if(target.matches('[data-switch-workspace]'))await switchWorkspace(target.dataset.switchWorkspace);
+    if(target.matches('[data-contact-tab]')){state.activeRecord.tab=target.dataset.contactTab;renderContactDrawer();}
+    if(target.matches('[data-organization-tab]')){state.activeRecord.tab=target.dataset.organizationTab;renderOrganizationDrawer();}
+    if(target.matches('[data-contact-page]')){state.contacts.page=Number(target.dataset.contactPage);renderContacts();}
+    if(target.matches('[data-agenda-bucket]')){state.agendaBucket=target.dataset.agendaBucket;renderAgenda();}
+    if(target.matches('[data-complete-task]')){const task=state.tasks.find(t=>t.id===target.dataset.completeTask)||state.agenda?.tasks?.find(t=>t.id===target.dataset.completeTask)||state.dashboard?.tasks?.find(t=>t.id===target.dataset.completeTask);if(task?.status==='completed')return;await api(`/api/tasks/${target.dataset.completeTask}`,{method:'PATCH',body:{status:'completed'}});toast('Task completed');await refreshCurrent();}
+    if(target.matches('[data-edit-task]')){const task=state.tasks.find(t=>t.id===target.dataset.editTask)||state.agenda?.tasks?.find(t=>t.id===target.dataset.editTask);openTaskModal(task||null);}
+    if(target.matches('[data-edit-followup]')){const f=state.followUps.find(x=>x.id===target.dataset.editFollowup)||state.agenda?.follow_ups?.find(x=>x.id===target.dataset.editFollowup);openFollowUpModal(f||null);}
+    if(target.matches('[data-complete-followup]')){const id=target.dataset.completeFollowup;const f=state.followUps.find(x=>x.id===id)||state.agenda?.follow_ups?.find(x=>x.id===id)||state.dashboard?.follow_ups?.find(x=>x.id===id);if(f)openCompleteFollowUpModal(f);}
+    if(target.matches('[data-snooze-followup]')){const id=target.dataset.snoozeFollowup;const f=state.followUps.find(x=>x.id===id)||state.agenda?.follow_ups?.find(x=>x.id===id)||state.dashboard?.follow_ups?.find(x=>x.id===id);if(f)openSnoozeModal(f);}
+    if(target.matches('[data-edit-deal]'))openDealModal(state.deals.find(d=>d.id===target.dataset.editDeal));
+    if(target.matches('[data-edit-contact]'))openContactModal(state.activeRecord?.data?.contact);
+    if(target.matches('[data-account-tier]')){const tier=target.dataset.accountTier;$$('[data-account-tier]').forEach(b=>b.classList.toggle('active',b===target));$$('[data-organization-row]').forEach(row=>row.hidden=!!tier&&row.dataset.tier!==tier);}
   });
-  $('#healthDonut').style.background = `conic-gradient(${stops.join(',')})`;
-  const estimatedAverage = Math.round((values[0] * 90 + values[1] * 67 + values[2] * 45 + values[3] * 22) / total);
-  $('#healthAverage').textContent = estimatedAverage;
-  const labels = ['Strong', 'Healthy', 'Needs attention', 'At risk'];
-  $('#healthLegend').innerHTML = labels.map((label, index) => `<div class="legend-row"><span class="legend-dot" style="--legend-color:${colors[index]}"></span><span>${label}</span><strong>${values[index]}</strong></div>`).join('');
+  $('#modalClose').addEventListener('click',closeModal);$('#modalBackdrop').addEventListener('click',(e)=>{if(e.target===$('#modalBackdrop'))closeModal();});$('#drawerClose').addEventListener('click',closeDrawer);
+  $('#openSidebar').addEventListener('click',()=>$('#sidebar').classList.add('open'));$('#closeSidebar').addEventListener('click',()=>$('#sidebar').classList.remove('open'));
+  $('#themeToggle').addEventListener('click',()=>{const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=theme;localStorage.setItem('pmg-theme',theme);});
+  $('#workspaceSwitcher').addEventListener('change',(e)=>switchWorkspace(e.target.value));$('#newWorkspaceButton').addEventListener('click',()=>openWorkspaceModal());
+  $('#accountSwitcher').addEventListener('change',(e)=>switchAccount(e.target.value));$('#clearAccountFilter').addEventListener('click',()=>switchAccount(''));
+  $('#globalSearch').addEventListener('input',debounce(runGlobalSearch,220));$('#globalSearch').addEventListener('keydown',(e)=>{if(e.key==='Escape')$('#searchResults').hidden=true;});
+  document.addEventListener('keydown',(e)=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('#globalSearch').focus();}if(e.key==='Escape'){closeModal();closeDrawer();$('#searchResults').hidden=true;}});
+  $('#content').addEventListener('input',debounce((event)=>{if(event.target.id==='contactSearch'){state.contacts.q=event.target.value;state.contacts.page=1;renderContacts();}if(event.target.id==='activitySearch'){state.activityFilters.q=event.target.value;renderActivityLog();}if(event.target.id==='organizationSearch'){const q=event.target.value.toLowerCase();$$('[data-organization-row]').forEach(row=>row.hidden=!row.dataset.search.includes(q));}},300));
+  $('#content').addEventListener('change',(event)=>{if(event.target.id==='contactStage'){state.contacts.stage=event.target.value;state.contacts.page=1;renderContacts();}if(event.target.id==='contactHealth'){state.contacts.health=event.target.value;state.contacts.page=1;renderContacts();}if(event.target.id==='contactSort'){state.contacts.sort=event.target.value;renderContacts();}if(event.target.id==='activityType'){state.activityFilters.type=event.target.value;renderActivityLog();}if(event.target.id==='activityContact'){state.activityFilters.contact=event.target.value;renderActivityLog();}if(event.target.id==='taskStatus'){state.taskFilters.status=event.target.value;renderTasks();}if(event.target.id==='taskType'){state.taskFilters.type=event.target.value;renderTasks();}if(event.target.id==='taskAssignee'){state.taskFilters.assignee=event.target.value;renderTasks();}});
+  $('#content').addEventListener('click',async(event)=>{if(event.target.id==='clearActivityFilters'){state.activityFilters={q:'',type:'',contact:''};renderActivityLog();}if(event.target.id==='importContacts')await importCsv();if(event.target.id==='exportContacts')location.href='/api/exports/contacts';});
+  $('#content').addEventListener('submit',async(event)=>{if(event.target.id==='workspaceSettings'){event.preventDefault();const data=Object.fromEntries(new FormData(event.target));await api(`/api/workspaces/${state.workspaceId}`,{method:'PATCH',body:data});state.me=await api('/api/me');renderIdentity();toast('Workspace updated');renderSettings();}});
 }
-
-function renderPipelineSummary(stages) {
-  const ordered = ['lead', 'qualified', 'proposal', 'negotiation', 'won'];
-  const max = Math.max(1, ...stages.map((stage) => Number(stage.value || 0)));
-  const map = Object.fromEntries(stages.map((stage) => [stage.stage, stage]));
-  $('#pipelineSummary').innerHTML = ordered.map((stage) => {
-    const row = map[stage] || { count: 0, value: 0 };
-    return `<div class="pipeline-row"><label>${titleCase(stage)}</label><div class="progress-track"><div class="progress-fill" style="width:${Math.max(3, Number(row.value || 0) / max * 100)}%"></div></div><strong>${formatCurrency(row.value)} · ${row.count}</strong></div>`;
-  }).join('');
-}
-
-function dueClass(value) {
-  return value && new Date(value) < new Date() ? 'overdue' : '';
-}
-
-function renderPriorityTasks(tasks) {
-  const root = $('#priorityTasks');
-  if (!tasks.length) {
-    root.innerHTML = '<div class="empty-state"><strong>No priority tasks</strong><span>Your follow-up queue is clear.</span></div>';
-    return;
-  }
-  root.innerHTML = tasks.map((task) => `<div class="task-item"><button class="task-check" data-complete-task="${task.id}" type="button" aria-label="Complete task"></button><div class="task-copy"><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.contact_name || task.organization_name || 'General task')} · ${titleCase(task.priority)}</span></div><span class="due ${dueClass(task.due_at)}">${relativeTime(task.due_at)}</span></div>`).join('');
-}
-
-function renderTimeline(activities, root) {
-  if (!activities.length) {
-    root.innerHTML = '<div class="empty-state"><strong>No interactions yet</strong><span>Log a call, email, meeting or note to start the history.</span></div>';
-    return;
-  }
-  root.innerHTML = activities.map((activity) => `<div class="timeline-item"><div class="timeline-icon">${icons[activity.type] || icons.other}</div><div class="timeline-copy"><strong>${escapeHtml(activity.subject)}</strong><p>${escapeHtml(activity.contact_name || activity.organization_name || activity.user_name || '')}${activity.outcome ? ` · ${escapeHtml(activity.outcome)}` : ''}</p></div><time class="timeline-time">${relativeTime(activity.occurred_at)}</time></div>`).join('');
-}
-
-async function loadContacts(page = state.contacts.page) {
-  $('#contactsTableBody').innerHTML = '<tr><td colspan="8"><div class="loading-state"><span class="spinner"></span><span>Loading contacts…</span></div></td></tr>';
-  const params = new URLSearchParams({ page, pageSize: state.contacts.pageSize, sort: state.contacts.sort });
-  if (state.contacts.q) params.set('q', state.contacts.q);
-  if (state.contacts.stage) params.set('stage', state.contacts.stage);
-  const result = await api(`/api/contacts?${params}`);
-  state.contacts = { ...state.contacts, ...result };
-  renderContacts();
-}
-
-function renderContacts() {
-  const root = $('#contactsTableBody');
-  if (!state.contacts.items.length) {
-    root.innerHTML = '<tr><td colspan="8"><div class="empty-state"><strong>No contacts found</strong><span>Adjust the filters or add a new relationship.</span></div></td></tr>';
-  } else {
-    root.innerHTML = state.contacts.items.map((contact, index) => {
-      const palette = index % 4;
-      const colors = [
-        ['var(--primary-soft)', 'var(--primary)'], ['var(--blue-soft)', 'var(--blue)'], ['var(--purple-soft)', 'var(--purple)'], ['var(--amber-soft)', 'var(--amber)'],
-      ][palette];
-      return `<tr class="row-link" data-contact-id="${contact.id}">
-        <td><input type="checkbox" data-select-contact="${contact.id}" ${state.selectedContacts.has(contact.id) ? 'checked' : ''} aria-label="Select ${escapeHtml(contact.first_name)}"></td>
-        <td><div class="contact-cell"><span class="contact-avatar" style="--avatar-bg:${colors[0]};--avatar-color:${colors[1]}">${initials(contact.first_name, contact.last_name)}</span><div><strong>${escapeHtml(`${contact.first_name} ${contact.last_name}`.trim())}</strong><span>${escapeHtml(contact.email || contact.job_title || 'No email')}</span></div></div></td>
-        <td><strong>${escapeHtml(contact.organization || 'Independent')}</strong><br><span style="color:var(--faint)">${escapeHtml(contact.job_title || '')}</span></td>
-        <td><span class="badge ${contact.lifecycle_stage}">${titleCase(contact.lifecycle_stage)}</span></td>
-        <td>${relativeTime(contact.last_contact_at)}</td>
-        <td><span class="due ${dueClass(contact.next_follow_up_at)}">${contact.next_follow_up_at ? relativeTime(contact.next_follow_up_at) : 'Not set'}</span></td>
-        <td><span class="health-pill" style="--health-color:${healthColor(contact.relationship_score)}">${contact.relationship_score}</span></td>
-        <td><button class="row-actions" data-open-contact="${contact.id}" type="button" aria-label="Open contact">•••</button></td>
-      </tr>`;
-    }).join('');
-  }
-  renderPagination();
-  updateSelectionBar();
-}
-
-function renderPagination() {
-  const { page, pages, total, pageSize } = state.contacts;
-  const start = total ? (page - 1) * pageSize + 1 : 0;
-  const end = Math.min(page * pageSize, total);
-  const buttons = [];
-  for (let i = Math.max(1, page - 2); i <= Math.min(pages, page + 2); i += 1) buttons.push(`<button class="${i === page ? 'active' : ''}" data-contact-page="${i}" type="button">${i}</button>`);
-  $('#contactsPagination').innerHTML = `<span>Showing ${start}–${end} of ${total} contacts</span><div class="pagination-buttons"><button data-contact-page="${Math.max(1, page - 1)}" ${page === 1 ? 'disabled' : ''}>‹</button>${buttons.join('')}<button data-contact-page="${Math.min(pages, page + 1)}" ${page === pages ? 'disabled' : ''}>›</button></div>`;
-}
-
-function updateSelectionBar() {
-  const count = state.selectedContacts.size;
-  $('#selectionBar').hidden = count === 0;
-  $('#selectionCount').textContent = count;
-  $('#selectAllContacts').checked = state.contacts.items.length > 0 && state.contacts.items.every((contact) => state.selectedContacts.has(contact.id));
-}
-
-async function openContact(id) {
-  $('#drawerBackdrop').hidden = false;
-  $('#detailDrawer').classList.add('open');
-  $('#detailDrawer').setAttribute('aria-hidden', 'false');
-  $('#detailDrawer').innerHTML = '<div class="empty-state" style="margin-top:80px">Loading relationship history…</div>';
-  try {
-    state.activeContact = await api(`/api/contacts/${id}`);
-    renderContactDrawer();
-  } catch (error) {
-    closeDrawer();
-    toast('Unable to open contact', error.message, 'error');
-  }
-}
-
-function renderContactDrawer() {
-  const contact = state.activeContact;
-  if (!contact) return;
-  const openValue = (contact.deals || []).filter((deal) => !['won', 'lost'].includes(deal.stage)).reduce((sum, deal) => sum + Number(deal.value || 0), 0);
-  $('#detailDrawer').innerHTML = `
-    <header class="drawer-header"><strong>Contact profile</strong><button class="close-button" data-close-drawer type="button" aria-label="Close">×</button></header>
-    <div class="drawer-body">
-      <div class="profile-header"><div class="profile-avatar">${initials(contact.first_name, contact.last_name)}</div><div><h2>${escapeHtml(`${contact.first_name} ${contact.last_name}`.trim())}</h2><p>${escapeHtml(contact.job_title || 'Contact')} ${contact.organization ? `at ${escapeHtml(contact.organization)}` : ''}</p><span class="health-pill" style="--health-color:${healthColor(contact.relationship_score)}">Relationship score ${contact.relationship_score}</span></div><span class="badge ${contact.lifecycle_stage}">${titleCase(contact.lifecycle_stage)}</span></div>
-      <div class="profile-actions">
-        <button class="profile-action" data-contact-action="email" type="button"><strong>✉</strong>Email</button>
-        <button class="profile-action" data-contact-action="call" type="button"><strong>☎</strong>Call</button>
-        <button class="profile-action" data-contact-action="meeting" type="button"><strong>◫</strong>Meeting</button>
-        <button class="profile-action" data-contact-action="note" type="button"><strong>✎</strong>Note</button>
-      </div>
-      <div class="detail-stats"><div class="detail-stat"><strong>${contact.activities?.length || 0}</strong><span>Interactions</span></div><div class="detail-stat"><strong>${formatCurrency(openValue)}</strong><span>Open pipeline</span></div><div class="detail-stat"><strong>${contact.tasks?.filter((task) => !['completed','cancelled'].includes(task.status)).length || 0}</strong><span>Open tasks</span></div></div>
-      <section class="detail-section"><h3>Contact details</h3><div class="info-grid">
-        <div class="info-item"><label>Email</label><span>${escapeHtml(contact.email || '—')}</span></div><div class="info-item"><label>Phone</label><span>${escapeHtml(contact.phone || contact.mobile || '—')}</span></div>
-        <div class="info-item"><label>Preferred channel</label><span>${titleCase(contact.preferred_channel)}</span></div><div class="info-item"><label>Timezone</label><span>${escapeHtml(contact.timezone || '—')}</span></div>
-        <div class="info-item"><label>Last contact</label><span>${relativeTime(contact.last_contact_at)}</span></div><div class="info-item"><label>Next follow-up</label><span>${contact.next_follow_up_at ? relativeTime(contact.next_follow_up_at) : 'Not scheduled'}</span></div>
-      </div></section>
-      ${contact.notes ? `<section class="detail-section"><h3>Relationship notes</h3><p style="color:var(--muted);font-size:12px">${escapeHtml(contact.notes)}</p></section>` : ''}
-      <section class="detail-section"><div class="panel-heading"><h3>Interaction history</h3><button class="text-button" data-contact-action="note" type="button">Add +</button></div><div class="timeline drawer-timeline" id="drawerTimeline"></div></section>
-      <section class="detail-section"><h3>Tags</h3><div class="tag-list">${(contact.tags || []).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('') || '<span class="tag">No tags</span>'}</div></section>
-    </div>`;
-  renderTimeline(contact.activities || [], $('#drawerTimeline'));
-}
-
-function closeDrawer() {
-  $('#detailDrawer').classList.remove('open');
-  $('#detailDrawer').setAttribute('aria-hidden', 'true');
-  $('#drawerBackdrop').hidden = true;
-  state.activeContact = null;
-}
-
-async function loadOrganizations() {
-  const params = new URLSearchParams();
-  const q = $('#organizationSearch')?.value.trim();
-  const type = $('#organizationTypeFilter')?.value;
-  if (q) params.set('q', q);
-  if (type) params.set('type', type);
-  state.organizations = await api(`/api/organizations?${params}`);
-  renderOrganizations();
-}
-
-function renderOrganizations() {
-  const root = $('#organizationGrid');
-  if (!state.organizations.length) {
-    root.innerHTML = '<div class="empty-state panel"><strong>No organizations found</strong><span>Add an organization or change the filters.</span></div>';
-    return;
-  }
-  root.innerHTML = state.organizations.map((org) => `<article class="organization-card"><div class="organization-top"><div class="organization-logo">${initials(...org.name.split(' ').slice(0, 2))}</div><div><h3>${escapeHtml(org.name)}</h3><p>${escapeHtml(org.industry || org.domain || org.country || 'Organization')}</p></div><span class="badge ${org.type}">${titleCase(org.type)}</span></div><div class="organization-meta"><div><strong>${org.contact_count || 0}</strong><span>Contacts</span></div><div><strong>${formatCurrency(org.pipeline_value)}</strong><span>Pipeline</span></div><div><strong style="color:${healthColor(org.relationship_score)}">${org.relationship_score}</strong><span>Health</span></div></div><div class="tag-list">${(org.tags || []).slice(0, 4).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div><div class="organization-footer"><span>${escapeHtml([org.city, org.country].filter(Boolean).join(', ') || 'Location not set')}</span><span>${org.last_contact_at ? relativeTime(org.last_contact_at) : 'No contact yet'}</span></div></article>`).join('');
-}
-
-async function loadDeals() {
-  state.deals = await api('/api/deals');
-  renderDeals();
-}
-
-function renderDeals() {
-  const active = state.deals.filter((deal) => deal.stage !== 'lost');
-  const total = active.reduce((sum, deal) => sum + Number(deal.value || 0), 0);
-  const weighted = state.deals.filter((deal) => !['won','lost'].includes(deal.stage)).reduce((sum, deal) => sum + Number(deal.value || 0) * Number(deal.probability || 0) / 100, 0);
-  const won = state.deals.filter((deal) => deal.stage === 'won').reduce((sum, deal) => sum + Number(deal.value || 0), 0);
-  const closed = state.deals.filter((deal) => ['won','lost'].includes(deal.stage));
-  const winRate = closed.length ? Math.round(state.deals.filter((deal) => deal.stage === 'won').length / closed.length * 100) : 0;
-  $('#pipelineMetrics').innerHTML = [
-    ['Total pipeline', formatCurrency(total), 'Open and won value', '€', 'var(--primary)', 'var(--primary-soft)'],
-    ['Weighted forecast', formatCurrency(weighted), 'Probability adjusted', '◫', 'var(--blue)', 'var(--blue-soft)'],
-    ['Won value', formatCurrency(won), 'Closed successfully', '✓', 'var(--green)', 'var(--green-soft)'],
-    ['Win rate', `${winRate}%`, `${closed.length} closed deals`, '↗', 'var(--purple)', 'var(--purple-soft)'],
-  ].map(([label, value, caption, icon, color, soft]) => `<article class="metric-card" style="--metric-color:${color};--metric-soft:${soft}"><div class="metric-icon">${icon}</div><span class="metric-label">${label}</span><div class="metric-row"><strong class="metric-value">${value}</strong></div><span class="metric-caption">${caption}</span></article>`).join('');
-
-  const stages = ['lead', 'qualified', 'proposal', 'negotiation', 'won', 'lost'];
-  $('#pipelineBoard').innerHTML = stages.map((stage) => {
-    const deals = state.deals.filter((deal) => deal.stage === stage);
-    const value = deals.reduce((sum, deal) => sum + Number(deal.value || 0), 0);
-    return `<section class="kanban-column" data-stage="${stage}"><div class="kanban-heading"><strong>${titleCase(stage)}</strong><span>${deals.length} · ${formatCurrency(value)}</span></div>${deals.map((deal) => `<article class="deal-card" data-deal-id="${deal.id}"><h3>${escapeHtml(deal.name)}</h3><p>${escapeHtml(deal.organization_name || deal.contact_name || 'Unassigned')}</p><div class="deal-value"><strong>${formatCurrency(deal.value, deal.currency)}</strong><span>${deal.expected_close_date ? formatDate(deal.expected_close_date) : 'No close date'}</span></div><div class="progress-track"><div class="progress-fill" style="width:${deal.probability}%"></div></div><div class="deal-footer"><span class="probability">${deal.probability}% likely</span><span class="avatar" style="width:24px;height:24px;font-size:8px">${initials(...String(deal.owner_name || 'PM').split(' ').slice(0,2))}</span></div></article>`).join('') || '<div class="empty-state"><span>No deals</span></div>'}</section>`;
-  }).join('');
-}
-
-async function loadTasks(status = '') {
-  const query = status ? `?status=${encodeURIComponent(status)}` : '';
-  state.tasks = await api(`/api/tasks${query}`);
-  renderTasks();
-}
-
-function renderTasks() {
-  const root = $('#taskBoard');
-  if (!state.tasks.length) {
-    root.innerHTML = '<div class="empty-state"><strong>No tasks in this view</strong><span>Add a follow-up or choose another status.</span></div>';
-    return;
-  }
-  const priorityColors = { urgent: 'var(--red)', high: 'var(--amber)', medium: 'var(--primary)', low: 'var(--faint)' };
-  root.innerHTML = state.tasks.map((task) => `<div class="task-row ${task.status === 'completed' ? 'completed' : ''}"><button class="task-check" data-complete-task="${task.id}" type="button" aria-label="${task.status === 'completed' ? 'Reopen' : 'Complete'} task">${task.status === 'completed' ? '✓' : ''}</button><div class="task-title"><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.contact_name || task.organization_name || task.deal_name || 'General')}</span></div><span>${escapeHtml(task.assignee_name || 'Unassigned')}</span><span class="due ${dueClass(task.due_at)}">${task.due_at ? relativeTime(task.due_at) : 'No due date'}</span><span class="badge ${task.status}">${titleCase(task.status)}</span><span class="priority-dot" style="--priority:${priorityColors[task.priority]}"></span></div>`).join('');
-}
-
-async function completeTask(id) {
-  const task = [...state.tasks, ...(state.dashboard?.tasks || [])].find((item) => item.id === id);
-  const status = task?.status === 'completed' ? 'open' : 'completed';
-  await api(`/api/tasks/${id}`, { method: 'PATCH', body: { status } });
-  toast(status === 'completed' ? 'Task completed' : 'Task reopened');
-  state.dashboard = null;
-  if (state.route === 'tasks') await loadTasks($('.task-tabs button.active')?.dataset.taskStatus || '');
-  else await loadDashboard();
-}
-
-async function loadAnalytics() {
-  const days = $('#analyticsRange').value;
-  state.analytics = await api(`/api/analytics?days=${days}`);
-  if (!state.dashboard) state.dashboard = await api('/api/dashboard');
-  renderAnalytics();
-}
-
-function renderAnalytics() {
-  const data = state.analytics;
-  const dashboard = state.dashboard;
-  if (!data || !dashboard) return;
-  const totalActivities = data.activity_types.reduce((sum, row) => sum + Number(row.count || 0), 0);
-  const engaged = Math.max(0, ...data.monthly.map((row) => Number(row.engaged_contacts || 0)));
-  $('#analyticsMetrics').innerHTML = [
-    ['Recorded activities', totalActivities, `Last ${data.days} days`, '↗', 'var(--primary)', 'var(--primary-soft)'],
-    ['Engaged contacts', engaged, 'Peak monthly reach', '◎', 'var(--blue)', 'var(--blue-soft)'],
-    ['Weighted forecast', formatCurrency(dashboard.pipeline.weighted_value), 'Open pipeline', '€', 'var(--purple)', 'var(--purple-soft)'],
-    ['Win rate', `${dashboard.pipeline.win_rate}%`, 'Won vs lost', '✓', 'var(--green)', 'var(--green-soft)'],
-    ['Overdue actions', dashboard.counts.overdue_tasks, 'Execution risk', '!', 'var(--red)', 'var(--red-soft)'],
-  ].map(([label, value, caption, icon, color, soft]) => `<article class="metric-card" style="--metric-color:${color};--metric-soft:${soft}"><div class="metric-icon">${icon}</div><span class="metric-label">${label}</span><div class="metric-row"><strong class="metric-value">${value}</strong></div><span class="metric-caption">${caption}</span></article>`).join('');
-
-  const maxActivity = Math.max(1, ...data.activity_types.map((row) => Number(row.count || 0)));
-  $('#activityMix').innerHTML = data.activity_types.map((row) => `<div class="bar-row"><label>${titleCase(row.type)}</label><div class="progress-track"><div class="progress-fill" style="width:${Number(row.count || 0) / maxActivity * 100}%"></div></div><strong>${row.count}</strong></div>`).join('') || '<div class="empty-state">No activity in this period.</div>';
-
-  const lifecycle = data.conversion;
-  const maxLifecycle = Math.max(1, ...lifecycle.map((row) => Number(row.count || 0)));
-  $('#lifecycleFunnel').innerHTML = lifecycle.map((row, index) => `<div class="funnel-row" style="width:${Math.max(46, Number(row.count || 0) / maxLifecycle * 100)}%;--level:${index}"><span>${titleCase(row.lifecycle_stage)}</span><strong>${row.count}</strong></div>`).join('');
-
-  const maxWon = Math.max(1, ...data.owner_performance.map((row) => Number(row.won_value || 0)));
-  $('#ownerPerformanceBody').innerHTML = data.owner_performance.map((owner) => `<tr><td><strong>${escapeHtml(owner.name)}</strong></td><td>${owner.activities}</td><td>${owner.contacts}</td><td>${formatCurrency(owner.won_value)}</td><td><div class="momentum"><span style="width:${Number(owner.won_value || 0) / maxWon * 100}%"></span></div></td></tr>`).join('');
-}
-
-function openModal({ title, body, submitLabel = 'Save', onSubmit = null, width = null }) {
-  const modal = $('#modal');
-  if (width) modal.style.width = width;
-  else modal.style.removeProperty('width');
-  modal.innerHTML = `<header class="modal-header"><h2 id="modalTitle">${escapeHtml(title)}</h2><button class="close-button" data-close-modal type="button" aria-label="Close">×</button></header><div class="modal-body">${body}</div><footer class="modal-footer"><button class="button secondary" data-close-modal type="button">Cancel</button>${onSubmit ? `<button class="button primary" id="modalSubmit" type="button">${escapeHtml(submitLabel)}</button>` : ''}</footer>`;
-  modal.hidden = false;
-  $('#modalBackdrop').hidden = false;
-  modal._onSubmit = onSubmit;
-  setTimeout(() => $('input, select, textarea, button', modal)?.focus(), 20);
-}
-
-function closeModal() {
-  $('#modal').hidden = true;
-  $('#modalBackdrop').hidden = true;
-  $('#modal').innerHTML = '';
-  $('#modal')._onSubmit = null;
-}
-
-function formValues(form) {
-  return Object.fromEntries(new FormData(form).entries());
-}
-
-async function organizationOptions() {
-  if (!state.organizations.length) state.organizations = await api('/api/organizations');
-  return `<option value="">No organization</option>${state.organizations.map((org) => `<option value="${org.id}">${escapeHtml(org.name)}</option>`).join('')}`;
-}
-
-async function showNewContactModal() {
-  const options = await organizationOptions();
-  openModal({ title: 'Add contact', submitLabel: 'Create contact', body: `<form id="modalForm" class="form-grid"><label>First name *<input name="first_name" required></label><label>Last name<input name="last_name"></label><label class="full">Organization<select name="organization_id">${options}</select></label><label>Job title<input name="job_title"></label><label>Email<input name="email" type="email"></label><label>Phone<input name="phone"></label><label>Lifecycle stage<select name="lifecycle_stage"><option value="lead">Lead</option><option value="qualified">Qualified</option><option value="opportunity">Opportunity</option><option value="customer">Customer</option><option value="partner">Partner</option></select></label><label>Source<input name="source" placeholder="Referral, event, LinkedIn…"></label><label>Next follow-up<input name="next_follow_up_at" type="datetime-local"></label><label class="full">Tags<input name="tags" placeholder="priority, investor, indonesia"></label><label class="full">Notes<textarea name="notes"></textarea></label></form>`, onSubmit: async () => {
-    const form = $('#modalForm'); if (!form.reportValidity()) return;
-    const data = formValues(form); data.tags = data.tags.split(',').map((tag) => tag.trim()).filter(Boolean); if (!data.next_follow_up_at) delete data.next_follow_up_at;
-    await api('/api/contacts', { method: 'POST', body: data }); closeModal(); toast('Contact created', `${data.first_name} is now in your CRM.`); state.dashboard = null; await loadContacts(1);
-  } });
-}
-
-function showNewOrganizationModal() {
-  openModal({ title: 'Add organization', submitLabel: 'Create organization', body: `<form id="modalForm" class="form-grid"><label class="full">Organization name *<input name="name" required></label><label>Type<select name="type"><option value="prospect">Prospect</option><option value="client">Client</option><option value="partner">Partner</option><option value="investor">Investor</option><option value="supplier">Supplier</option></select></label><label>Industry<input name="industry"></label><label>Domain<input name="domain" placeholder="example.com"></label><label>Website<input name="website" type="url"></label><label>Country<input name="country"></label><label>City<input name="city"></label><label>Annual value<input name="annual_value" type="number" min="0"></label><label>Relationship score<input name="relationship_score" type="number" min="0" max="100" value="50"></label><label class="full">Tags<input name="tags" placeholder="priority, partner"></label><label class="full">Description<textarea name="description"></textarea></label></form>`, onSubmit: async () => {
-    const form = $('#modalForm'); if (!form.reportValidity()) return; const data = formValues(form); data.tags = data.tags.split(',').map((tag) => tag.trim()).filter(Boolean); data.annual_value = Number(data.annual_value || 0); data.relationship_score = Number(data.relationship_score || 50);
-    await api('/api/organizations', { method: 'POST', body: data }); closeModal(); toast('Organization created', data.name); state.organizations = []; await loadOrganizations();
-  } });
-}
-
-async function showNewDealModal() {
-  const orgs = await organizationOptions();
-  const contacts = state.contacts.items.length ? state.contacts.items : (await api('/api/contacts?pageSize=100')).items;
-  openModal({ title: 'Create deal', submitLabel: 'Create deal', body: `<form id="modalForm" class="form-grid"><label class="full">Deal name *<input name="name" required></label><label>Organization<select name="organization_id">${orgs}</select></label><label>Primary contact<select name="primary_contact_id"><option value="">No contact</option>${contacts.map((contact) => `<option value="${contact.id}">${escapeHtml(`${contact.first_name} ${contact.last_name}`)}</option>`).join('')}</select></label><label>Stage<select name="stage"><option value="lead">Lead</option><option value="qualified">Qualified</option><option value="proposal">Proposal</option><option value="negotiation">Negotiation</option><option value="won">Won</option></select></label><label>Value<input name="value" type="number" min="0" required></label><label>Currency<select name="currency"><option>EUR</option><option>USD</option><option>GBP</option><option>SGD</option><option>IDR</option></select></label><label>Probability %<input name="probability" type="number" min="0" max="100" value="10"></label><label>Expected close<input name="expected_close_date" type="date"></label><label class="full">Description<textarea name="description"></textarea></label></form>`, onSubmit: async () => {
-    const form = $('#modalForm'); if (!form.reportValidity()) return; const data = formValues(form); data.value = Number(data.value || 0); data.probability = Number(data.probability || 0);
-    await api('/api/deals', { method: 'POST', body: data }); closeModal(); toast('Deal created', data.name); await loadDeals();
-  } });
-}
-
-async function showNewTaskModal() {
-  const contacts = state.contacts.items.length ? state.contacts.items : (await api('/api/contacts?pageSize=100')).items;
-  openModal({ title: 'Add task', submitLabel: 'Create task', body: `<form id="modalForm" class="form-grid"><label class="full">Task title *<input name="title" required></label><label>Contact<select name="contact_id"><option value="">General task</option>${contacts.map((contact) => `<option value="${contact.id}">${escapeHtml(`${contact.first_name} ${contact.last_name}`)}</option>`).join('')}</select></label><label>Priority<select name="priority"><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option><option value="low">Low</option></select></label><label>Status<select name="status"><option value="open">Open</option><option value="in_progress">In progress</option></select></label><label>Due date<input name="due_at" type="datetime-local"></label><label class="full">Description<textarea name="description"></textarea></label></form>`, onSubmit: async () => {
-    const form = $('#modalForm'); if (!form.reportValidity()) return; const data = formValues(form); if (!data.due_at) delete data.due_at;
-    await api('/api/tasks', { method: 'POST', body: data }); closeModal(); toast('Task created', data.title); state.dashboard = null; if (state.route === 'tasks') await loadTasks();
-  } });
-}
-
-async function showActivityModal(presetType = 'note', contact = state.activeContact) {
-  const contacts = state.contacts.items.length ? state.contacts.items : (await api('/api/contacts?pageSize=100')).items;
-  openModal({ title: 'Log interaction', submitLabel: 'Save interaction', body: `<form id="modalForm" class="form-grid"><label>Contact<select name="contact_id"><option value="">No contact</option>${contacts.map((item) => `<option value="${item.id}" ${contact?.id === item.id ? 'selected' : ''}>${escapeHtml(`${item.first_name} ${item.last_name}`)}</option>`).join('')}</select></label><label>Type<select name="type"><option value="email" ${presetType === 'email' ? 'selected' : ''}>Email</option><option value="call" ${presetType === 'call' ? 'selected' : ''}>Call</option><option value="meeting" ${presetType === 'meeting' ? 'selected' : ''}>Meeting</option><option value="whatsapp">WhatsApp</option><option value="linkedin">LinkedIn</option><option value="note" ${presetType === 'note' ? 'selected' : ''}>Note</option></select></label><label>Direction<select name="direction"><option value="outbound">Outbound</option><option value="inbound">Inbound</option><option value="internal" ${presetType === 'note' ? 'selected' : ''}>Internal</option></select></label><label>Occurred at<input name="occurred_at" type="datetime-local" value="${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0,16)}"></label><label class="full">Subject *<input name="subject" required placeholder="What happened?"></label><label class="full">Details<textarea name="body" placeholder="Conversation summary, key context and commitments"></textarea></label><label>Outcome<input name="outcome" placeholder="Positive, waiting, no answer…"></label><label>Next follow-up<input name="next_follow_up_at" type="datetime-local"></label></form>`, onSubmit: async () => {
-    const form = $('#modalForm'); if (!form.reportValidity()) return; const data = formValues(form); if (!data.next_follow_up_at) delete data.next_follow_up_at;
-    const path = data.contact_id ? `/api/contacts/${data.contact_id}/activities` : '/api/activities'; if (data.contact_id) delete data.contact_id;
-    await api(path, { method: 'POST', body: data }); closeModal(); toast('Interaction logged', data.subject); state.dashboard = null; await loadDashboard(); if (contact?.id) await openContact(contact.id);
-  } });
-}
-
-function showQuickAdd() {
-  openModal({ title: 'Quick add', body: `<div class="architecture-grid"><button class="profile-action" data-quick-action="new-contact" type="button"><strong>◎</strong>Contact</button><button class="profile-action" data-quick-action="new-organization" type="button"><strong>▦</strong>Organization</button><button class="profile-action" data-quick-action="new-deal" type="button"><strong>€</strong>Deal</button><button class="profile-action" data-quick-action="new-task" type="button"><strong>✓</strong>Task</button><button class="profile-action" data-quick-action="log-activity" type="button"><strong>↗</strong>Interaction</button></div>` });
-}
-
-function triggerImport() {
-  $('#csvFileInput').value = '';
-  $('#csvFileInput').click();
-}
-
-async function handleCsvFile(file) {
-  if (!file) return;
-  if (file.size > 5 * 1024 * 1024) return toast('File too large', 'CSV imports are limited to 5 MB.', 'error');
-  const text = await file.text();
-  const lines = text.split(/\r?\n/).filter(Boolean);
-  openModal({ title: 'Import contacts', submitLabel: `Import ${Math.max(0, lines.length - 1)} rows`, body: `<div class="dropzone"><strong>${escapeHtml(file.name)}</strong><span>${(file.size / 1024).toFixed(1)} KB · ${Math.max(0, lines.length - 1)} data rows</span></div><div class="import-summary"><strong>Expected columns</strong><p class="form-hint">first_name, last_name, job_title, email, phone, organization, lifecycle_stage, source, tags</p></div>`, onSubmit: async () => {
-    $('#modalSubmit').disabled = true; $('#modalSubmit').textContent = 'Importing…';
-    const result = await api('/api/import/contacts', { method: 'POST', body: { csv: text, file_name: file.name } }); closeModal(); toast('Import complete', `${result.success} imported, ${result.failures} failed.`); state.dashboard = null; await loadContacts(1);
-  } });
-}
-
-async function exportContacts() {
-  toast('Preparing export', 'Gathering all contact pages…');
-  let page = 1; let pages = 1; const items = [];
-  do {
-    const result = await api(`/api/contacts?page=${page}&pageSize=100&sort=name&order=asc`);
-    items.push(...result.items); pages = result.pages; page += 1;
-  } while (page <= pages);
-  const headers = ['first_name','last_name','job_title','email','phone','organization','lifecycle_stage','relationship_score','last_contact_at','next_follow_up_at','tags'];
-  const csvEscape = (value) => /[",\n]/.test(String(value ?? '')) ? `"${String(value ?? '').replaceAll('"','""')}"` : String(value ?? '');
-  const csv = [headers.join(','), ...items.map((contact) => headers.map((header) => csvEscape(header === 'tags' ? (contact.tags || []).join('; ') : contact[header])).join(','))].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `partnermarket-contacts-${new Date().toISOString().slice(0,10)}.csv`; link.click(); URL.revokeObjectURL(url);
-  toast('Export ready', `${items.length} contacts downloaded.`);
-}
-
-async function openDealEditor(id) {
-  const deal = state.deals.find((item) => item.id === id);
-  if (!deal) return;
-  openModal({ title: 'Update deal stage', submitLabel: 'Update deal', body: `<form id="modalForm" class="form-grid"><label class="full">Deal<input value="${escapeHtml(deal.name)}" disabled></label><label>Stage<select name="stage">${['lead','qualified','proposal','negotiation','won','lost'].map((stage) => `<option value="${stage}" ${deal.stage === stage ? 'selected' : ''}>${titleCase(stage)}</option>`).join('')}</select></label><label>Probability %<input name="probability" type="number" min="0" max="100" value="${deal.probability}"></label><label>Expected close<input name="expected_close_date" type="date" value="${deal.expected_close_date?.slice(0,10) || ''}"></label><label class="full">Notes<textarea name="description">${escapeHtml(deal.description || '')}</textarea></label></form>`, onSubmit: async () => {
-    const data = formValues($('#modalForm')); data.probability = Number(data.probability || 0); await api(`/api/deals/${id}`, { method: 'PATCH', body: data }); closeModal(); toast('Deal updated', deal.name); await loadDeals(); state.dashboard = null;
-  } });
-}
-
-const searchGlobal = debounce(async (query) => {
-  const root = $('#searchResults');
-  if (query.trim().length < 2) { root.hidden = true; return; }
-  try {
-    const data = await api(`/api/search?q=${encodeURIComponent(query.trim())}`);
-    const groups = [
-      ['Contacts', data.contacts], ['Organizations', data.organizations], ['Deals', data.deals],
-    ].filter(([, items]) => items?.length);
-    root.innerHTML = groups.length ? groups.map(([label, items]) => `<div class="search-group-title">${label}</div>${items.map((item) => `<button class="search-result" data-search-type="${item.type}" data-search-id="${item.id}" type="button"><span class="search-result-icon">${item.type === 'contact' ? '◎' : item.type === 'organization' ? '▦' : '€'}</span><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.subtitle || item.email || '')}</small></span></button>`).join('')}`).join('') : '<div class="empty-state">No matching records.</div>';
-    root.hidden = false;
-  } catch {
-    root.hidden = true;
-  }
-}, 220);
-
-function bindEvents() {
-  window.addEventListener('hashchange', () => navigate(location.hash.slice(1)));
-  document.addEventListener('click', async (event) => {
-    const nav = event.target.closest('[data-route]');
-    if (nav) { event.preventDefault(); navigate(nav.dataset.route); return; }
-    const jump = event.target.closest('[data-route-jump]'); if (jump) { navigate(jump.dataset.routeJump); return; }
-    const action = event.target.closest('[data-action]')?.dataset.action;
-    if (action) {
-      if (action === 'new-contact') await showNewContactModal();
-      if (action === 'new-organization') showNewOrganizationModal();
-      if (action === 'new-deal') await showNewDealModal();
-      if (action === 'new-task') await showNewTaskModal();
-      if (action === 'log-activity') await showActivityModal();
-      if (action === 'import-contacts') triggerImport();
-      if (action === 'export-contacts') await exportContacts();
-      return;
-    }
-    const quick = event.target.closest('[data-quick-action]'); if (quick) { const actionName = quick.dataset.quickAction; closeModal(); setTimeout(() => document.querySelector(`[data-action="${actionName}"]`)?.click(), 20); return; }
-    if (event.target.closest('[data-close-modal]') || event.target === $('#modalBackdrop')) { closeModal(); return; }
-    if (event.target.closest('[data-close-drawer]') || event.target === $('#drawerBackdrop')) { closeDrawer(); return; }
-    const contactRow = event.target.closest('[data-contact-id]');
-    if (contactRow && !event.target.matches('input') && !event.target.closest('button')) { await openContact(contactRow.dataset.contactId); return; }
-    const contactButton = event.target.closest('[data-open-contact]'); if (contactButton) { await openContact(contactButton.dataset.openContact); return; }
-    const pageButton = event.target.closest('[data-contact-page]'); if (pageButton && !pageButton.disabled) { state.contacts.page = Number(pageButton.dataset.contactPage); await loadContacts(state.contacts.page); return; }
-    const complete = event.target.closest('[data-complete-task]'); if (complete) { await completeTask(complete.dataset.completeTask); return; }
-    const contactAction = event.target.closest('[data-contact-action]'); if (contactAction) { await showActivityModal(contactAction.dataset.contactAction, state.activeContact); return; }
-    const dealCard = event.target.closest('[data-deal-id]'); if (dealCard) { await openDealEditor(dealCard.dataset.dealId); return; }
-    const searchResult = event.target.closest('[data-search-type]');
-    if (searchResult) {
-      $('#searchResults').hidden = true; $('#globalSearch').value = '';
-      if (searchResult.dataset.searchType === 'contact') await openContact(searchResult.dataset.searchId);
-      else navigate(searchResult.dataset.searchType === 'deal' ? 'pipeline' : 'organizations');
-      return;
-    }
-    if (!event.target.closest('.global-search-wrap')) $('#searchResults').hidden = true;
-  });
-
-  $('#modal').addEventListener('click', async (event) => {
-    if (event.target.id === 'modalSubmit' && $('#modal')._onSubmit) {
-      try { event.target.disabled = true; await $('#modal')._onSubmit(); }
-      catch (error) { event.target.disabled = false; toast('Unable to save', error.message, 'error'); }
-    }
-  });
-
-  $('#menuButton').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
-  $('#themeButton').addEventListener('click', () => {
-    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next; localStorage.setItem('pmg-theme', next);
-  });
-  $('#quickAddButton').addEventListener('click', showQuickAdd);
-  $('#globalSearch').addEventListener('input', (event) => searchGlobal(event.target.value));
-  document.addEventListener('keydown', (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('#globalSearch').focus(); }
-    if (event.key === 'Escape') { closeModal(); closeDrawer(); $('#searchResults').hidden = true; }
-  });
-
-  $('#contactSearch').addEventListener('input', debounce(async (event) => { state.contacts.q = event.target.value.trim(); state.contacts.page = 1; await loadContacts(1); }, 300));
-  $('#contactStageFilter').addEventListener('change', async (event) => { state.contacts.stage = event.target.value; await loadContacts(1); });
-  $('#contactSort').addEventListener('change', async (event) => { state.contacts.sort = event.target.value; await loadContacts(1); });
-  $('#contactRefresh').addEventListener('click', () => loadContacts());
-  $('#selectAllContacts').addEventListener('change', (event) => { state.contacts.items.forEach((contact) => event.target.checked ? state.selectedContacts.add(contact.id) : state.selectedContacts.delete(contact.id)); renderContacts(); });
-  $('#contactsTableBody').addEventListener('change', (event) => { const id = event.target.dataset.selectContact; if (!id) return; event.target.checked ? state.selectedContacts.add(id) : state.selectedContacts.delete(id); updateSelectionBar(); });
-  $('#organizationSearch').addEventListener('input', debounce(loadOrganizations, 300));
-  $('#organizationTypeFilter').addEventListener('change', loadOrganizations);
-  $('#taskTabs').addEventListener('click', async (event) => { const button = event.target.closest('[data-task-status]'); if (!button) return; $$('#taskTabs button').forEach((item) => item.classList.toggle('active', item === button)); await loadTasks(button.dataset.taskStatus); });
-  $('#analyticsRange').addEventListener('change', loadAnalytics);
-  $('#csvFileInput').addEventListener('change', (event) => handleCsvFile(event.target.files[0]));
-}
+async function runGlobalSearch(event){const q=event.target.value.trim();const root=$('#searchResults');if(q.length<2){root.hidden=true;return;}try{const result=await api(`/api/search?q=${encodeURIComponent(q)}`);const groups=[['Contacts',result.contacts||[],'contact'],['Accounts',result.organizations||[],'organization'],['Deals',result.deals||[],'deal']];root.innerHTML=groups.filter(([,items])=>items.length).map(([label,items,type])=>`<div class="search-group-label">${label}</div>${items.map(item=>`<button class="search-result" ${type==='contact'?`data-open-contact="${item.id}"`:type==='organization'?`data-open-organization="${item.id}"`:`data-route-link="pipeline"`}><span><strong>${escapeHtml(type==='contact'?`${item.first_name} ${item.last_name}`:item.name)}</strong><small>${escapeHtml(item.email||item.industry||titleCase(item.stage||''))}</small></span></button>`).join('')}`).join('')||empty('No results','Try a different search.');root.hidden=false;}catch{root.hidden=true;}}
+async function importCsv(){const file=$('#csvFile').files[0];let csv=$('#csvText').value;if(file)csv=await file.text();if(!csv.trim()){toast('No CSV supplied','Choose a file or paste CSV data.','error');return;}try{const result=await api('/api/imports/contacts',{method:'POST',body:{csv,file_name:file?.name||'pasted-contacts.csv'}});$('#importResult').innerHTML=`<div class="callout" style="margin-top:14px"><strong>Import complete</strong>${result.success_count} contacts imported; ${result.failure_count} failed.</div>`;toast('Import complete',`${result.success_count} contacts added.`);await loadReferenceData();}catch(error){toast('Import failed',error.message,'error');}}
 
 boot();
