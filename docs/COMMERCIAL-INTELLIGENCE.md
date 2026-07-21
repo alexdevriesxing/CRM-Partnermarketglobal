@@ -15,7 +15,7 @@ The intelligence view reports:
 - overdue pipeline value and deal count;
 - opportunities without an expected close date;
 - opportunities without a next step;
-- opportunities with no update for at least 30 days;
+- opportunities with no update within the selected 30, 60, 90 or 180-day risk window;
 - six-month pipeline and weighted forecast by expected close month.
 
 Risk scoring is transparent. It is composed from overdue close dates, stale updates, missing next steps, missing primary contacts and missing account links. The UI displays the contributing reasons for every flagged opportunity.
@@ -37,7 +37,7 @@ Possible duplicate groups are detected by normalized contact email, account name
 Optional query parameters:
 
 - `account`: restrict results to one account in the active workspace;
-- `days`: activity window between 30 and 365 days.
+- `days`: inactivity risk threshold between 30 and 180 days. Account inactivity uses twice the selected threshold, capped at 365 days.
 
 The endpoint returns forecast totals, monthly forecast, risky opportunities, risky accounts, data-quality metrics and duplicate groups.
 

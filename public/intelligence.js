@@ -1,5 +1,5 @@
 const intelligenceState = {
-  days: '90',
+  days: '30',
   data: null,
   workspace: null,
 };
@@ -117,6 +117,9 @@ async function renderCommercialIntelligence(root = document.querySelector('#cont
   const riskDeals = data.risk_deals || [];
   const riskAccounts = data.risk_accounts || [];
 
+  const navigationRiskBadge = document.querySelector('#intelligenceRiskCount');
+  if (navigationRiskBadge) navigationRiskBadge.textContent = Number(data.summary?.urgent_deals || 0) || '';
+
   root.innerHTML = `
     <header class="page-header"><div><p class="eyebrow">Forecast, risk and CRM hygiene</p><h1>Commercial Intelligence</h1><p>Prioritize revenue, repair weak data and surface relationships that need action.${focused ? ` Focused on ${intelEscape(accountName)}.` : ''}</p></div><div class="page-actions"><button class="button secondary" data-intelligence-export ${riskDeals.length ? '' : 'disabled'}>Export risk list</button><button class="button secondary" data-intelligence-refresh>Refresh</button><button class="button primary" data-route-link="pipeline">Open pipeline</button></div></header>
     <section class="metrics-grid">
@@ -128,10 +131,10 @@ async function renderCommercialIntelligence(root = document.querySelector('#cont
     </section>
 
     <section class="layout-grid">
-      <article class="panel"><header class="panel-header"><div><h2>Six-month forecast</h2><p>Pipeline and probability-weighted value by expected close month</p></div><select id="intelligenceWindow" aria-label="Commercial intelligence activity window"><option value="30" ${data.window_days===30?'selected':''}>30-day activity</option><option value="90" ${data.window_days===90?'selected':''}>90-day activity</option><option value="180" ${data.window_days===180?'selected':''}>180-day activity</option><option value="365" ${data.window_days===365?'selected':''}>365-day activity</option></select></header><div class="panel-body"><div class="intelligence-forecast-chart">${renderForecastChart(data.forecast_by_month || [])}</div><div class="intelligence-legend"><span><i></i>Total pipeline</span><span><i class="weighted"></i>Weighted share</span></div></div></article>
+      <article class="panel"><header class="panel-header"><div><h2>Six-month forecast</h2><p>Pipeline and probability-weighted value by expected close month</p></div><select id="intelligenceWindow" aria-label="Commercial intelligence activity window"><option value="30" ${data.window_days===30?'selected':''}>30-day risk window</option><option value="60" ${data.window_days===60?'selected':''}>60-day risk window</option><option value="90" ${data.window_days===90?'selected':''}>90-day risk window</option><option value="180" ${data.window_days===180?'selected':''}>180-day risk window</option></select></header><div class="panel-body"><div class="intelligence-forecast-chart">${renderForecastChart(data.forecast_by_month || [])}</div><div class="intelligence-legend"><span><i></i>Total pipeline</span><span><i class="weighted"></i>Weighted share</span></div></div></article>
       <article class="panel"><header class="panel-header"><div><h2>Pipeline hygiene</h2><p>Signals that weaken forecast confidence</p></div></header><div class="panel-body intelligence-signal-grid">
         <article class="intelligence-signal ${forecast.overdue_count ? 'danger' : ''}"><strong>${forecast.overdue_count || 0}</strong><span>Overdue close dates</span><small>${intelCurrency(forecast.overdue_value)} affected</small></article>
-        <article class="intelligence-signal ${forecast.stale_count ? 'warning' : ''}"><strong>${forecast.stale_count || 0}</strong><span>Stale opportunities</span><small>No update in 30+ days</small></article>
+        <article class="intelligence-signal ${forecast.stale_count ? 'warning' : ''}"><strong>${forecast.stale_count || 0}</strong><span>Stale opportunities</span><small>No update in ${data.stale_after_days || 30}+ days</small></article>
         <article class="intelligence-signal ${forecast.missing_next_step_count ? 'warning' : ''}"><strong>${forecast.missing_next_step_count || 0}</strong><span>Missing next steps</span><small>No explicit commercial action</small></article>
         <article class="intelligence-signal ${forecast.unscheduled_count ? 'warning' : ''}"><strong>${forecast.unscheduled_count || 0}</strong><span>Unscheduled deals</span><small>No expected close date</small></article>
       </div></article>

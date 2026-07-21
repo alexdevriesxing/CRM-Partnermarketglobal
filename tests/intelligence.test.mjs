@@ -55,3 +55,12 @@ test('commercial intelligence release reports v2.4.0', async () => {
   assert.match(worker, /version:'2\.4\.0'/);
   assert.match(mock, /version:'2\.4\.0'/);
 });
+
+test('risk window drives stale thresholds and sidebar attention', async () => {
+  const [backend, ui] = await Promise.all([read('src/intelligence.js'), read('public/intelligence.js')]);
+  assert.match(backend, /stale_after_days: days/);
+  assert.match(backend, /account_inactive_after_days: accountInactivityDays/);
+  assert.match(backend, /datetime\('now','\$\{modifier\}'\)/);
+  assert.match(ui, /60-day risk window/);
+  assert.match(ui, /intelligenceRiskCount/);
+});

@@ -8,8 +8,8 @@ function number(value) {
 }
 
 function daysWindow(request) {
-  const raw = Number(new URL(request.url).searchParams.get('days') || 90);
-  return Math.max(30, Math.min(365, Number.isFinite(raw) ? Math.trunc(raw) : 90));
+  const raw = Number(new URL(request.url).searchParams.get('days') || 30);
+  return Math.max(30, Math.min(180, Number.isFinite(raw) ? Math.trunc(raw) : 30));
 }
 
 function accountScope(url, alias = '') {
@@ -22,10 +22,10 @@ function accountScope(url, alias = '') {
   };
 }
 
-function riskReasons(row) {
+function riskReasons(row, staleDays) {
   const reasons = [];
   if (number(row.is_overdue)) reasons.push('Close date overdue');
-  if (number(row.is_stale)) reasons.push('No update in 30+ days');
+  if (number(row.is_stale)) reasons.push(`No update in ${staleDays}+ days`);
   if (number(row.missing_next_step)) reasons.push('Missing next step');
   if (number(row.missing_contact)) reasons.push('Missing primary contact');
   if (number(row.missing_account)) reasons.push('Missing CRM account');
@@ -55,6 +55,8 @@ export async function getCommercialIntelligence(env, ctx, request) {
   }
 
   const modifier = `-${days} days`;
+  const accountInactivityDays = Math.min(365, days * 2);
+  const accountModifier = `-${accountInactivityDays} days`;
   const [forecast, forecastByMonth, riskDeals, riskAccounts, contactsQuality, organizationsQuality, dealsQuality, duplicateContacts, duplicateOrganizations] = await Promise.all([
     env.DB.prepare(`SELECT
       COUNT(*) open_deals,
@@ -66,7 +68,7 @@ export async function getCommercialIntelligence(env, ctx, request) {
       COALESCE(SUM(CASE WHEN d.expected_close_date IS NOT NULL AND date(d.expected_close_date)<date('now') THEN d.value ELSE 0 END),0) overdue_value,
       SUM(CASE WHEN d.expected_close_date IS NULL OR trim(d.expected_close_date)='' THEN 1 ELSE 0 END) unscheduled_count,
       SUM(CASE WHEN d.next_step IS NULL OR trim(d.next_step)='' THEN 1 ELSE 0 END) missing_next_step_count,
-      SUM(CASE WHEN d.updated_at<datetime('now','-30 days') THEN 1 ELSE 0 END) stale_count
+      SUM(CASE WHEN d.updated_at<datetime('now','${modifier}') THEN 1 ELSE 0 END) stale_count
       FROM deals d WHERE d.workspace_id=? AND d.stage NOT IN ('won','lost')${scope.clause}`).bind(workspaceId, ...scope.bindings).first(),
     env.DB.prepare(`WITH RECURSIVE months(month_start) AS (
       SELECT date('now','start of month')
@@ -79,18 +81,18 @@ export async function getCommercialIntelligence(env, ctx, request) {
       GROUP BY months.month_start ORDER BY months.month_start`).bind(workspaceId, ...scope.bindings).all(),
     env.DB.prepare(`SELECT d.*,o.name organization_name,c.first_name||' '||c.last_name contact_name,u.name owner_name,
       CASE WHEN d.expected_close_date IS NOT NULL AND date(d.expected_close_date)<date('now') THEN 1 ELSE 0 END is_overdue,
-      CASE WHEN d.updated_at<datetime('now','-30 days') THEN 1 ELSE 0 END is_stale,
+      CASE WHEN d.updated_at<datetime('now','${modifier}') THEN 1 ELSE 0 END is_stale,
       CASE WHEN d.next_step IS NULL OR trim(d.next_step)='' THEN 1 ELSE 0 END missing_next_step,
       CASE WHEN d.primary_contact_id IS NULL OR trim(d.primary_contact_id)='' THEN 1 ELSE 0 END missing_contact,
       CASE WHEN d.organization_id IS NULL OR trim(d.organization_id)='' THEN 1 ELSE 0 END missing_account,
       (CASE WHEN d.expected_close_date IS NOT NULL AND date(d.expected_close_date)<date('now') THEN 35 ELSE 0 END +
-       CASE WHEN d.updated_at<datetime('now','-30 days') THEN 25 ELSE 0 END +
+       CASE WHEN d.updated_at<datetime('now','${modifier}') THEN 25 ELSE 0 END +
        CASE WHEN d.next_step IS NULL OR trim(d.next_step)='' THEN 20 ELSE 0 END +
        CASE WHEN d.primary_contact_id IS NULL OR trim(d.primary_contact_id)='' THEN 10 ELSE 0 END +
        CASE WHEN d.organization_id IS NULL OR trim(d.organization_id)='' THEN 10 ELSE 0 END) risk_score
       FROM deals d LEFT JOIN organizations o ON o.id=d.organization_id LEFT JOIN contacts c ON c.id=d.primary_contact_id LEFT JOIN users u ON u.id=d.owner_id
       WHERE d.workspace_id=? AND d.stage NOT IN ('won','lost')${scope.clause} AND (
-        (d.expected_close_date IS NOT NULL AND date(d.expected_close_date)<date('now')) OR d.updated_at<datetime('now','-30 days') OR
+        (d.expected_close_date IS NOT NULL AND date(d.expected_close_date)<date('now')) OR d.updated_at<datetime('now','${modifier}') OR
         d.next_step IS NULL OR trim(d.next_step)='' OR d.primary_contact_id IS NULL OR trim(d.primary_contact_id)='' OR d.organization_id IS NULL OR trim(d.organization_id)='')
       ORDER BY risk_score DESC,d.value DESC LIMIT 60`).bind(workspaceId, ...scope.bindings).all(),
     env.DB.prepare(`SELECT o.*,u.name owner_name,
@@ -99,12 +101,12 @@ export async function getCommercialIntelligence(env, ctx, request) {
       (SELECT COUNT(*) FROM tasks t WHERE t.workspace_id=o.workspace_id AND t.organization_id=o.id AND t.status NOT IN ('completed','cancelled') AND t.due_at<datetime('now')) overdue_tasks,
       (SELECT COUNT(*) FROM follow_ups f WHERE f.workspace_id=o.workspace_id AND f.organization_id=o.id AND f.status IN ('open','snoozed') AND COALESCE(f.snoozed_until,f.due_at)<datetime('now')) overdue_follow_ups,
       (CASE WHEN o.relationship_score<35 THEN 35 WHEN o.relationship_score<55 THEN 20 ELSE 0 END +
-       CASE WHEN o.last_contact_at IS NULL OR o.last_contact_at<datetime('now','-60 days') THEN 30 ELSE 0 END +
+       CASE WHEN o.last_contact_at IS NULL OR o.last_contact_at<datetime('now','${accountModifier}') THEN 30 ELSE 0 END +
        CASE WHEN (SELECT COUNT(*) FROM tasks t WHERE t.workspace_id=o.workspace_id AND t.organization_id=o.id AND t.status NOT IN ('completed','cancelled') AND t.due_at<datetime('now'))>0 THEN 20 ELSE 0 END +
        CASE WHEN (SELECT COUNT(*) FROM follow_ups f WHERE f.workspace_id=o.workspace_id AND f.organization_id=o.id AND f.status IN ('open','snoozed') AND COALESCE(f.snoozed_until,f.due_at)<datetime('now'))>0 THEN 15 ELSE 0 END) risk_score
       FROM organizations o LEFT JOIN users u ON u.id=o.owner_id
       WHERE o.workspace_id=? AND o.status='active'${organizationScope.clause} AND (
-        o.relationship_score<55 OR o.last_contact_at IS NULL OR o.last_contact_at<datetime('now','-60 days') OR
+        o.relationship_score<55 OR o.last_contact_at IS NULL OR o.last_contact_at<datetime('now','${accountModifier}') OR
         EXISTS(SELECT 1 FROM tasks t WHERE t.workspace_id=o.workspace_id AND t.organization_id=o.id AND t.status NOT IN ('completed','cancelled') AND t.due_at<datetime('now')) OR
         EXISTS(SELECT 1 FROM follow_ups f WHERE f.workspace_id=o.workspace_id AND f.organization_id=o.id AND f.status IN ('open','snoozed') AND COALESCE(f.snoozed_until,f.due_at)<datetime('now')))
       ORDER BY risk_score DESC,open_pipeline DESC LIMIT 40`).bind(workspaceId, ...organizationScope.bindings).all(),
@@ -141,11 +143,13 @@ export async function getCommercialIntelligence(env, ctx, request) {
   ]);
 
   const quality = qualitySummary(contactsQuality, organizationsQuality, dealsQuality);
-  const riskyDeals = (riskDeals.results || []).map((row) => ({ ...row, risk_reasons: riskReasons(row) }));
+  const riskyDeals = (riskDeals.results || []).map((row) => ({ ...row, risk_reasons: riskReasons(row, days) }));
   const duplicateGroups = number(duplicateContacts.results?.length) + number(duplicateOrganizations.results?.length);
 
   return {
     window_days: days,
+    stale_after_days: days,
+    account_inactive_after_days: accountInactivityDays,
     account_id: scope.accountId,
     generated_at: new Date().toISOString(),
     forecast: {
