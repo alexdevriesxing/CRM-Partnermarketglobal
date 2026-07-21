@@ -100,3 +100,17 @@ Existing installations apply `migrations/0003_multi_workspace_daily_work.sql`. T
 Before deployment, replace placeholder binding IDs and Access settings in `wrangler.jsonc`, apply D1 migrations and trigger the manual Cloudflare deployment workflow.
 
 See [docs/V2-ARCHITECTURE.md](docs/V2-ARCHITECTURE.md) and [docs/V2-DEPLOYMENT.md](docs/V2-DEPLOYMENT.md).
+
+## Integrated business email
+
+CRM users can compose email from approved identities on **goldendragoncapital.co**, **devriessalesconsultancy.com**, and **partnermarketglobal.com**. A private Cloudflare Email Worker performs delivery while the CRM Worker resolves the account/contact, applies consent rules, records provider status, and writes successful sends into the chronological contact log.
+
+Deploy the private worker before the CRM worker:
+
+```bash
+npm run db:migrate:remote
+npm run deploy:email
+npm run deploy
+```
+
+See [docs/EMAIL-SERVICE.md](docs/EMAIL-SERVICE.md) for domain onboarding, DNS authentication, deployment, and logging details.
