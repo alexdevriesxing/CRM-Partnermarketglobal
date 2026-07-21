@@ -36,11 +36,11 @@ test('accessibility and reduced-motion support are present', async () => {
   assert.match(app, /aria-current/);
 });
 
-test('release and mock server identify v2.4.0', async () => {
+test('release and mock server identify v2.5.0', async () => {
   const [pkg, worker, mock] = await Promise.all([read('package.json'), read('src/worker.js'), read('scripts/dev-server.mjs')]);
-  assert.equal(JSON.parse(pkg).version, '2.4.0');
-  assert.match(worker, /version:'2\.4\.0'/);
-  assert.match(mock, /version:'2\.4\.0'/);
+  assert.equal(JSON.parse(pkg).version, '2.5.0');
+  assert.match(worker, /version:'2\.5\.0'/);
+  assert.match(mock, /version:'2\.5\.0'/);
 });
 
 

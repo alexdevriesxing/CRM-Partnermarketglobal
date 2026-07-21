@@ -105,7 +105,7 @@ async function renderRoute(){
     else if(state.route==='pipeline')await renderPipeline();
     else if(state.route==='email'){const {renderEmailCenter}=await import('/email.js');await renderEmailCenter($('#content'));}
     else if(state.route==='tasks')await renderTasks();
-    else if(state.route==='analytics')await renderAnalytics();
+    else if(state.route==='analytics'){const {renderDetailedAnalytics}=await import('/reporting.js');await renderDetailedAnalytics($('#content'));}
     else if(state.route==='intelligence'){const {renderCommercialIntelligence}=await import('/intelligence.js');await renderCommercialIntelligence($('#content'));}
     else if(state.route==='data')renderData();
     else if(state.route==='settings')renderSettings();

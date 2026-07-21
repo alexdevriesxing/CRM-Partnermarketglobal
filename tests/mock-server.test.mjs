@@ -11,7 +11,7 @@ test.before(async()=>{
 test.after(()=>server?.kill());
 
 test('mock app serves shell and health',async()=>{
-  const health=await fetch('http://127.0.0.1:8787/health').then(r=>r.json());assert.equal(health.ok,true);assert.equal(health.version,'2.4.0');
+  const health=await fetch('http://127.0.0.1:8787/health').then(r=>r.json());assert.equal(health.ok,true);assert.equal(health.version,'2.5.0');
   const html=await fetch('http://127.0.0.1:8787').then(r=>r.text());assert.match(html,/PartnerMarket Global CRM/);assert.match(html,/workspaceSwitcher/);
 });
 
@@ -41,4 +41,14 @@ test('commercial intelligence mock endpoint is account aware',async()=>{
   const focused=await fetch('http://127.0.0.1:8787/api/intelligence?account=o1').then(r=>r.json());
   assert.equal(all.window_days,30);assert.ok(all.forecast);assert.ok(all.data_quality);assert.ok(Array.isArray(all.risk_deals));
   assert.equal(focused.account_id,'o1');assert.equal(focused.stale_after_days,30);assert.equal(focused.stale_after_days,30);assert.ok(focused.forecast.open_deals<=all.forecast.open_deals);
+});
+
+test('detailed analytics endpoint supports report filters and comparisons', async()=>{
+  const report=await fetch('http://127.0.0.1:8787/api/analytics?days=30&account=o1').then((response)=>response.json());
+  assert.equal(report.report.days,30);
+  assert.equal(report.report.account_id,'o1');
+  assert.ok(Object.hasOwn(report.executive,'won_revenue_change'));
+  assert.ok(Array.isArray(report.team_performance));
+  assert.ok(Array.isArray(report.source_performance));
+  assert.ok(Object.hasOwn(report.execution.email,'delivery_rate'));
 });

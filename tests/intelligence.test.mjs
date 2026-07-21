@@ -49,11 +49,11 @@ test('account risk combines relationship and overdue work signals', async () => 
   assert.match(ui, /Accounts needing attention/);
 });
 
-test('commercial intelligence release reports v2.4.0', async () => {
+test('commercial intelligence release reports v2.5.0', async () => {
   const [pkg, worker, mock] = await Promise.all([read('package.json'), read('src/worker.js'), read('scripts/dev-server.mjs')]);
-  assert.equal(JSON.parse(pkg).version, '2.4.0');
-  assert.match(worker, /version:'2\.4\.0'/);
-  assert.match(mock, /version:'2\.4\.0'/);
+  assert.equal(JSON.parse(pkg).version, '2.5.0');
+  assert.match(worker, /version:'2\.5\.0'/);
+  assert.match(mock, /version:'2\.5\.0'/);
 });
 
 test('risk window drives stale thresholds and sidebar attention', async () => {
