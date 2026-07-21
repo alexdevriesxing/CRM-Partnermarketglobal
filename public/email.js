@@ -5,6 +5,9 @@ const emailUi = {
   deals: [],
   messages: [],
   permissions: {},
+  overview: null,
+  health: null,
+  centerFilters: { q: '', status: '', sender: '', days: '30' },
 };
 
 const MAX_ATTACHMENTS = 10;
@@ -61,6 +64,7 @@ function composerStyles() {
     .email-sender-form{margin:12px 0;padding:14px;border:1px solid var(--border,#dbe5e8);border-radius:14px;background:var(--surface,#fff)}.email-sender-form .field{margin-bottom:10px}.email-sender-form input{width:100%}.email-sender-form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
     .email-advanced{margin:14px 0;border:1px solid var(--border,#dbe5e8);border-radius:14px;padding:0 14px}.email-advanced summary{cursor:pointer;font-weight:700;padding:14px 0}.email-advanced .form-grid{padding-bottom:14px}
     .email-draft-note{margin-bottom:14px;padding:10px 12px;border-radius:12px;background:var(--primary-soft,#dcf7f1);font-size:12px}.email-attachments{display:grid;gap:7px;margin-top:8px}.email-attachment{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;border:1px solid var(--border,#dbe5e8);border-radius:10px;font-size:12px}.toast.warning{border-color:#f59e0b}.toast.warning strong{color:#b45309}
+    .email-center-health{display:flex;align-items:center;gap:10px}.email-health-dot{width:10px;height:10px;border-radius:99px;background:var(--red,#c84747);box-shadow:0 0 0 4px color-mix(in srgb,var(--red,#c84747) 18%,transparent)}.email-health-dot.ok{background:var(--green,#15936b);box-shadow:0 0 0 4px color-mix(in srgb,var(--green,#15936b) 18%,transparent)}.email-center-chart{height:180px;display:grid;grid-template-columns:repeat(14,minmax(12px,1fr));align-items:end;gap:7px;padding-top:16px}.email-center-bar{min-height:4px;border-radius:7px 7px 3px 3px;background:linear-gradient(180deg,var(--primary,#0f766e),color-mix(in srgb,var(--primary,#0f766e) 62%,transparent));position:relative}.email-center-bar[data-failed]:after{content:"";position:absolute;left:0;right:0;bottom:0;height:var(--failed-height,0%);background:var(--red,#c84747);border-radius:3px}.email-center-bar-label{display:block;text-align:center;font-size:9px;color:var(--muted,#6c7d84);margin-top:6px}.email-sender-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.email-center-message{max-width:430px}.email-center-message strong,.email-center-message small{display:block}.email-center-message small{margin-top:4px;color:var(--muted,#6c7d84)}.email-center-failure{padding:12px;border:1px solid color-mix(in srgb,var(--red,#c84747) 25%,var(--border,#dbe5e8));background:var(--red-soft,#fde8e8);border-radius:12px;margin-bottom:10px}.email-center-failure strong,.email-center-failure small{display:block}.email-center-failure small{margin-top:4px}.email-center-draft{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:14px 16px;border:1px solid color-mix(in srgb,var(--primary,#0f766e) 30%,var(--border,#dbe5e8));background:var(--primary-soft,#dcf7f1);border-radius:14px;margin-bottom:16px}.email-center-draft p{margin:3px 0 0;color:var(--muted,#6c7d84)}
     @media(max-width:820px){.email-composer-backdrop{padding:0}.email-composer{height:100vh;max-height:none;border-radius:0}.email-composer-layout{grid-template-columns:1fr}.email-composer-side{border-left:0;border-top:1px solid var(--border,#dbe5e8)}}
   `;
   document.head.append(style);
@@ -258,6 +262,102 @@ async function openEmailComposer(defaults = {}) {
   form.elements.subject?.focus();
 }
 
+function emailCenterMetric(label, value, caption, soft = 'var(--primary-soft)') {
+  return `<article class="metric-card" style="--metric-soft:${soft}"><span class="metric-label">${emailEscape(label)}</span><strong class="metric-value">${emailEscape(value)}</strong><span class="metric-caption">${emailEscape(caption)}</span></article>`;
+}
+
+function emailCenterMessageRow(message, index) {
+  const sentAt = message.sent_at || message.created_at;
+  const recipientTotal = Number(message.recipient_count || (message.to || []).length + (message.cc || []).length + (message.bcc || []).length);
+  return `<tr><td><div class="email-center-message"><strong>${emailEscape(message.subject || 'Untitled email')}</strong><small>${emailEscape((message.to || []).join(', ') || 'No recipient')}</small></div></td><td>${emailEscape(message.organization_name || '—')}${message.contact_name ? `<small style="display:block;color:var(--muted)">${emailEscape(message.contact_name)}</small>` : ''}</td><td><strong>${emailEscape(message.sender_display_name || message.from_name || '')}</strong><small style="display:block;color:var(--muted)">${emailEscape(message.from_email)}</small></td><td>${recipientTotal}</td><td><span class="email-status ${emailEscape(message.status)}">${emailEscape(message.status)}</span>${message.failure_reason ? `<small style="display:block;color:var(--red);margin-top:5px">${emailEscape(message.failure_reason)}</small>` : ''}</td><td>${sentAt ? new Date(sentAt).toLocaleString() : '—'}</td><td><button class="small-button" type="button" data-email-center-reuse="${index}">Use again</button></td></tr>`;
+}
+
+function emailCenterCsv(messages) {
+  const quote = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+  return ['subject,status,account,contact,from,to,cc,bcc,recipients,sent_at,failure_reason', ...messages.map((message) => [message.subject,message.status,message.organization_name,message.contact_name,message.from_email,(message.to||[]).join('; '),(message.cc||[]).join('; '),(message.bcc||[]).join('; '),message.recipient_count,message.sent_at||message.created_at,message.failure_reason].map(quote).join(','))].join('\n');
+}
+
+function downloadEmailCenterCsv(messages) {
+  const blob = new Blob([emailCenterCsv(messages)], { type: 'text/csv;charset=utf-8' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `pmg-email-history-${new Date().toISOString().slice(0,10)}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+async function loadEmailCenterData() {
+  const filters = emailUi.centerFilters;
+  const params = new URLSearchParams({ limit: '250' });
+  const account = localStorage.getItem('pmg-account') || '';
+  if (account) params.set('account', account);
+  if (filters.q) params.set('q', filters.q);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.sender) params.set('sender', filters.sender);
+  const [overview, health, senders, messages, organizations] = await Promise.all([
+    emailApi(`/api/email/overview?days=${encodeURIComponent(filters.days || '30')}`),
+    emailApi('/api/email/health'),
+    emailApi('/api/email/senders'),
+    emailApi(`/api/email/messages?${params}`),
+    emailApi('/api/organizations'),
+  ]);
+  emailUi.overview = overview;
+  emailUi.health = health;
+  emailUi.senders = senders;
+  emailUi.messages = messages;
+  emailUi.organizations = organizations;
+}
+
+async function renderEmailCenter(root = document.querySelector('#content')) {
+  composerStyles();
+  root.innerHTML = '<div class="loading-state"><span class="spinner"></span><span>Loading Email Center…</span></div>';
+  try { await loadEmailCenterData(); } catch (error) {
+    root.innerHTML = `<div class="empty-state"><strong>Unable to load Email Center</strong><span>${emailEscape(error.message)}</span><div style="margin-top:12px"><button class="button secondary" data-email-center-refresh>Try again</button></div></div>`;
+    root.querySelector('[data-email-center-refresh]')?.addEventListener('click', () => renderEmailCenter(root));
+    return;
+  }
+  const overview = emailUi.overview || { totals:{}, senders:[], daily:[], failures:[] };
+  const totals = overview.totals || {};
+  const draft = readDraft();
+  const accountId = localStorage.getItem('pmg-account') || '';
+  const accountName = emailUi.organizations.find((item) => item.id === accountId)?.name;
+  const health = emailUi.health || {};
+  const days = Number(overview.window_days || emailUi.centerFilters.days || 30);
+  const daily = overview.daily || [];
+  const maxVolume = Math.max(1, ...daily.map((item) => Number(item.total || 0)));
+  const failures = overview.failures || [];
+  const failureBadge = document.querySelector('#emailFailureCount');
+  if (failureBadge) failureBadge.textContent = Number(totals.failed || 0) || '';
+  root.innerHTML = `
+    <header class="page-header"><div><p class="eyebrow">Outbound relationship operations</p><h1>Email Center</h1><p>Compose, monitor and reuse account-linked business email across all approved domains.${accountName ? ` Focused on ${emailEscape(accountName)}.` : ''}</p></div><div class="page-actions"><button class="button secondary" type="button" data-email-center-export>Export CSV</button><button class="button secondary" type="button" data-email-center-refresh>Refresh</button><button class="button primary" type="button" data-compose-email>✉ Compose email</button></div></header>
+    ${draft ? `<section class="email-center-draft"><div><strong>Recoverable draft available</strong><p>Last saved ${new Date(draft.saved_at).toLocaleString()} · Attachments must be selected again.</p></div><button class="button primary" type="button" data-compose-email>Continue draft</button></section>` : ''}
+    <section class="metrics-grid">
+      ${emailCenterMetric('Sent', totals.sent || 0, `Last ${days} days`, 'var(--green-soft)')}
+      ${emailCenterMetric('Delivery rate', `${totals.delivery_rate || 0}%`, `${totals.failed || 0} failed`, 'var(--primary-soft)')}
+      ${emailCenterMetric('Recipients', totals.recipients || 0, 'Across To, CC and BCC', 'var(--blue-soft)')}
+      ${emailCenterMetric('Queued', totals.queued || 0, 'Awaiting final status', 'var(--amber-soft)')}
+      ${emailCenterMetric('Attachments', totals.with_attachments || 0, 'Messages with files', 'var(--purple-soft)')}
+    </section>
+    <section class="layout-grid">
+      <article class="panel"><header class="panel-header"><div><h2>Delivery volume</h2><p>Sent and failed messages during the selected window</p></div><select id="emailCenterDays" aria-label="Email overview period"><option value="14" ${days===14?'selected':''}>14 days</option><option value="30" ${days===30?'selected':''}>30 days</option><option value="90" ${days===90?'selected':''}>90 days</option></select></header><div class="panel-body"><div class="email-center-chart">${daily.length ? daily.map((item) => { const total=Number(item.total||0); const failed=Number(item.failed||0); const height=Math.max(4,total/maxVolume*100); const failedHeight=total?failed/total*100:0; return `<div><div class="email-center-bar" data-failed style="height:${height}%;--failed-height:${failedHeight}%" title="${emailEscape(item.day)}: ${total} total, ${failed} failed"></div><small class="email-center-bar-label">${new Date(item.day+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</small></div>`; }).join('') : '<div class="empty-state" style="grid-column:1/-1"><strong>No email activity yet</strong><span>New sends will appear here.</span></div>'}</div></div></article>
+      <article class="panel"><header class="panel-header"><div><h2>Delivery service</h2><p>Private Worker and Cloudflare provider readiness</p></div></header><div class="panel-body"><div class="email-center-health"><i class="email-health-dot ${health.ok ? 'ok' : ''}"></i><div><strong>${health.ok ? 'Operational' : 'Attention required'}</strong><small style="display:block;color:var(--muted);margin-top:4px">${health.ok ? 'CRM service binding and Email Sending provider are responding.' : emailEscape(health.error || 'Email service health could not be confirmed.')}</small></div></div><div class="detail-grid" style="margin-top:18px"><div class="detail-field"><span>Private Worker</span><strong>${health.service_binding ? 'Connected' : 'Missing'}</strong></div><div class="detail-field"><span>Provider binding</span><strong>${health.provider_binding ? 'Configured' : 'Not confirmed'}</strong></div><div class="detail-field"><span>Active identities</span><strong>${emailUi.senders.length}</strong></div><div class="detail-field"><span>Checked</span><strong>${health.checked_at ? new Date(health.checked_at).toLocaleString() : '—'}</strong></div></div></div></article>
+    </section>
+    <section class="panel" style="margin-bottom:16px"><header class="panel-header"><div><h2>Sender performance</h2><p>Approved identities and delivery outcomes</p></div></header><div class="panel-body"><div class="email-sender-grid">${(overview.senders||[]).map((sender)=>`<article class="email-sender-card"><div style="display:flex;justify-content:space-between;gap:8px"><strong>${emailEscape(sender.display_name)}</strong>${sender.is_default?'<span class="email-status">Default</span>':''}</div><small style="display:block;margin-top:4px">${emailEscape(sender.email_address)}</small><div class="detail-grid" style="margin-top:12px"><div class="detail-field"><span>Sent</span><strong>${Number(sender.sent||0)}</strong></div><div class="detail-field"><span>Failed</span><strong>${Number(sender.failed||0)}</strong></div></div></article>`).join('') || '<div class="empty-state"><strong>No sender identities</strong><span>Add an approved sender from the composer.</span></div>'}</div></div></section>
+    <section class="layout-grid">
+      <article class="panel"><header class="panel-header"><div><h2>Email history</h2><p>Searchable, account-linked delivery ledger</p></div></header><div class="toolbar"><input class="search-input" id="emailCenterSearch" value="${emailEscape(emailUi.centerFilters.q)}" placeholder="Search subject, sender, account or contact…"><select id="emailCenterStatus"><option value="">All statuses</option>${['sent','failed','queued'].map((status)=>`<option value="${status}" ${emailUi.centerFilters.status===status?'selected':''}>${status[0].toUpperCase()+status.slice(1)}</option>`).join('')}</select><select id="emailCenterSender">${emailOption(emailUi.senders,'id',(item)=>item.display_name,emailUi.centerFilters.sender,'All senders')}</select></div><div class="table-wrap"><table><thead><tr><th>Message</th><th>CRM account</th><th>Sender</th><th>Recipients</th><th>Status</th><th>Sent / attempted</th><th></th></tr></thead><tbody>${emailUi.messages.length ? emailUi.messages.map(emailCenterMessageRow).join('') : `<tr><td colspan="7"><div class="empty-state"><strong>No matching email</strong><span>Change the filters or compose a new message.</span></div></td></tr>`}</tbody></table></div></article>
+      <article class="panel"><header class="panel-header"><div><h2>Failure diagnostics</h2><p>Most recent messages requiring attention</p></div></header><div class="panel-body">${failures.length ? failures.map((message)=>`<article class="email-center-failure"><strong>${emailEscape(message.subject)}</strong><small>${emailEscape(message.organization_name||'Unknown account')} · ${new Date(message.created_at).toLocaleString()}</small><small>${emailEscape(message.failure_reason||message.failure_code||'Delivery failed')}</small></article>`).join('') : '<div class="empty-state"><strong>No recent failures</strong><span>The delivery queue is healthy.</span></div>'}</div></article>
+    </section>`;
+
+  let searchTimer;
+  root.querySelector('#emailCenterSearch')?.addEventListener('input', (event) => { clearTimeout(searchTimer); searchTimer=setTimeout(()=>{emailUi.centerFilters.q=event.target.value.trim();renderEmailCenter(root);},300); });
+  root.querySelector('#emailCenterStatus')?.addEventListener('change', (event) => { emailUi.centerFilters.status=event.target.value;renderEmailCenter(root); });
+  root.querySelector('#emailCenterSender')?.addEventListener('change', (event) => { emailUi.centerFilters.sender=event.target.value;renderEmailCenter(root); });
+  root.querySelector('#emailCenterDays')?.addEventListener('change', (event) => { emailUi.centerFilters.days=event.target.value;renderEmailCenter(root); });
+  root.querySelectorAll('[data-email-center-refresh]').forEach((button)=>button.addEventListener('click',()=>renderEmailCenter(root)));
+  root.querySelector('[data-email-center-export]')?.addEventListener('click',()=>downloadEmailCenterCsv(emailUi.messages));
+  root.querySelectorAll('[data-email-center-reuse]').forEach((button)=>button.addEventListener('click',()=>{const message=emailUi.messages[Number(button.dataset.emailCenterReuse)];openEmailComposer({ organization_id:message.organization_id, contact_id:message.contact_id, deal_id:message.deal_id, sender_identity_id:message.sender_identity_id, to:(message.to||[]).join(', '), cc:(message.cc||[]).join(', '), bcc:(message.bcc||[]).join(', '), subject:message.subject, text_body:message.text_body, html_body:message.html_body });}));
+}
+
 function mailtoDefaults(link) {
   const url = new URL(link.href);
   return { to: decodeURIComponent(url.pathname), cc: url.searchParams.get('cc') || '', bcc: url.searchParams.get('bcc') || '', subject: url.searchParams.get('subject') || '', text_body: url.searchParams.get('body') || '' };
@@ -284,4 +384,4 @@ function installEmailComposer() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installEmailComposer);
 else installEmailComposer();
 
-export { openEmailComposer };
+export { openEmailComposer, renderEmailCenter };

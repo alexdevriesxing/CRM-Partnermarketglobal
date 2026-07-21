@@ -248,6 +248,86 @@ async function markDeliveryFailed(env, ctx, request, emailId, activityId, sender
   try { await audit(env, ctx, request, 'send_failed', 'email_message', emailId, { code: failureCode, message: failureReason }); } catch (auditError) { console.error('Unable to audit email delivery failure', auditError); }
 }
 
+function emailOverviewDays(request) {
+  const raw = Number(new URL(request.url).searchParams.get('days') || 30);
+  return Math.max(7, Math.min(365, Number.isFinite(raw) ? Math.trunc(raw) : 30));
+}
+
+export async function getEmailOverview(env, ctx, request) {
+  const days = emailOverviewDays(request);
+  const modifier = `-${days} days`;
+  const [totals, senders, daily, failures] = await Promise.all([
+    env.DB.prepare(`SELECT COUNT(*) total,
+      SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END) sent,
+      SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) failed,
+      SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) queued,
+      COALESCE(SUM(recipient_count),0) recipients,
+      SUM(CASE WHEN attachments_json IS NOT NULL AND attachments_json!='[]' THEN 1 ELSE 0 END) with_attachments
+      FROM email_messages WHERE workspace_id=? AND created_at>=datetime('now',?)`).bind(ctx.workspace.id, modifier).first(),
+    env.DB.prepare(`SELECT s.id,s.display_name,s.email_address,s.domain,s.is_default,
+      COUNT(m.id) total,
+      SUM(CASE WHEN m.status='sent' THEN 1 ELSE 0 END) sent,
+      SUM(CASE WHEN m.status='failed' THEN 1 ELSE 0 END) failed
+      FROM email_sender_identities s
+      LEFT JOIN email_messages m ON m.sender_identity_id=s.id AND m.workspace_id=s.workspace_id AND m.created_at>=datetime('now',?)
+      WHERE s.workspace_id=? AND s.is_active=1
+      GROUP BY s.id,s.display_name,s.email_address,s.domain,s.is_default
+      ORDER BY s.is_default DESC,total DESC,s.display_name`).bind(modifier, ctx.workspace.id).all(),
+    env.DB.prepare(`SELECT date(created_at) day,COUNT(*) total,
+      SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END) sent,
+      SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) failed
+      FROM email_messages WHERE workspace_id=? AND created_at>=date('now',?)
+      GROUP BY date(created_at) ORDER BY day`).bind(ctx.workspace.id, modifier).all(),
+    env.DB.prepare(`SELECT m.*,s.display_name sender_display_name,c.first_name||' '||c.last_name contact_name,o.name organization_name
+      FROM email_messages m
+      LEFT JOIN email_sender_identities s ON s.id=m.sender_identity_id
+      LEFT JOIN contacts c ON c.id=m.contact_id
+      LEFT JOIN organizations o ON o.id=m.organization_id
+      WHERE m.workspace_id=? AND m.status='failed'
+      ORDER BY m.created_at DESC LIMIT 8`).bind(ctx.workspace.id).all(),
+  ]);
+  const total = Number(totals?.total || 0);
+  const sent = Number(totals?.sent || 0);
+  const failed = Number(totals?.failed || 0);
+  return {
+    window_days: days,
+    totals: {
+      total,
+      sent,
+      failed,
+      queued: Number(totals?.queued || 0),
+      recipients: Number(totals?.recipients || 0),
+      with_attachments: Number(totals?.with_attachments || 0),
+      delivery_rate: total ? Math.round((sent / total) * 1000) / 10 : 0,
+      failure_rate: total ? Math.round((failed / total) * 1000) / 10 : 0,
+    },
+    senders: (senders.results || []).map(senderRecord),
+    daily: daily.results || [],
+    failures: (failures.results || []).map(messageRecord),
+  };
+}
+
+export async function getEmailHealth(env, ctx, request) {
+  const checkedAt = nowIso();
+  if (!env.EMAIL_SERVICE) return { ok: false, service_binding: false, provider_binding: false, checked_at: checkedAt, error: 'EMAIL_SERVICE binding is not configured' };
+  const requestId = request.headers.get('x-request-id') || crypto.randomUUID();
+  try {
+    const response = await env.EMAIL_SERVICE.fetch('https://email.internal/health', { headers: { 'x-request-id': requestId } });
+    const payload = await response.json().catch(() => ({}));
+    return {
+      ok: response.ok && payload.ok === true,
+      service_binding: true,
+      provider_binding: payload.binding === 'configured',
+      service: payload.service || 'partnermarket-global-email-worker',
+      checked_at: payload.timestamp || checkedAt,
+      request_id: requestId,
+      error: response.ok ? null : (payload.error || 'Email Worker health check failed'),
+    };
+  } catch (error) {
+    return { ok: false, service_binding: true, provider_binding: false, checked_at: checkedAt, request_id: requestId, error: text(error.message, 'Email Worker health check failed') };
+  }
+}
+
 export async function sendCrmEmail(env, ctx, request) {
   requireWrite(ctx);
   if (!env.EMAIL_SERVICE) throw Object.assign(new Error('The private Email Worker service binding is not configured'), { status: 503 });
