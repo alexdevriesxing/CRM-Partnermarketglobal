@@ -24,17 +24,23 @@ test('CRM Worker calls the private Email Worker through a service binding', asyn
   assert.equal(emailConfig.main, 'src/email-worker.js');
 });
 
-test('email API enforces consent and logs successful delivery', async () => {
+test('email API enforces consent, recipient scope and durable account logging', async () => {
   const source = await read('src/email.js');
   assert.match(source, /email_opt_out/);
   assert.match(source, /status === 'do_not_contact'/);
   assert.match(source, /consent_status === 'withdrawn'/);
+  assert.match(source, /selected contact must be one of the email recipients/i);
+  assert.match(source, /belongs to a different CRM account/);
+  assert.match(source, /selected deal belongs to a different account/i);
   assert.match(source, /INSERT INTO activities/);
-  assert.match(source, /organization_id/);
+  assert.match(source, /outcome,occurred_at/);
+  assert.match(source, /'Queued'/);
   assert.match(source, /UPDATE organizations SET last_contact_at/);
   assert.match(source, /UPDATE contacts SET last_contact_at/);
   assert.match(source, /status='failed'/);
   assert.match(source, /provider_message_id/);
+  assert.ok(source.indexOf('createQueuedEmailActivity') < source.indexOf("env.EMAIL_SERVICE.fetch"), 'CRM activity must be created before delivery');
+  assert.match(source, /email was delivered, but some CRM status fields could not be finalized/i);
 });
 
 test('main API exposes sender, message and send endpoints', async () => {
