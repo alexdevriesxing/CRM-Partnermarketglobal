@@ -42,3 +42,11 @@ test('release and mock server identify v2.3.0', async () => {
   assert.match(worker, /version:'2\.3\.0'/);
   assert.match(mock, /version:'2\.3\.0'/);
 });
+
+
+test('overview metrics respect the selected CRM account', async () => {
+  const [backend, email] = await Promise.all([read('src/email.js'), read('public/email.js')]);
+  assert.match(backend, /accountId = text\(url\.searchParams\.get\('account'\)\)/);
+  assert.match(backend, /account_id: accountId/);
+  assert.match(email, /&account=\$\{encodeURIComponent\(account\)\}/);
+});
