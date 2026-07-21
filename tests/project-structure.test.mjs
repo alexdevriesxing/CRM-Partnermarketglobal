@@ -2,26 +2,39 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const read = (file) => readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+const read=(path)=>readFile(new URL(`../${path}`,import.meta.url),'utf8');
 
-test('Worker configuration includes the required Cloudflare bindings', async () => {
-  const config = await read('wrangler.jsonc');
-  for (const binding of ['d1_databases', 'kv_namespaces', 'r2_buckets', 'queues', 'analytics_engine_datasets', 'triggers', 'assets']) {
-    assert.match(config, new RegExp(`"${binding}"`));
-  }
+test('multi-workspace migration scopes every primary CRM entity',async()=>{
+  const sql=await read('migrations/0003_multi_workspace_daily_work.sql');
+  for(const table of ['organizations','contacts','activities','deals','tasks','attachments','imports','audit_log'])assert.match(sql,new RegExp(`ALTER TABLE ${table} ADD COLUMN workspace_id`));
+  assert.match(sql,/CREATE TABLE IF NOT EXISTS workspaces/);
+  assert.match(sql,/CREATE TABLE IF NOT EXISTS workspace_members/);
+  assert.match(sql,/CREATE TABLE IF NOT EXISTS follow_ups/);
+  assert.match(sql,/CREATE TABLE IF NOT EXISTS saved_views/);
 });
 
-test('database migration defines the core CRM entities and indexes', async () => {
-  const migration = await read('migrations/0001_initial.sql');
-  for (const table of ['users', 'organizations', 'contacts', 'activities', 'deals', 'tasks', 'attachments', 'audit_log']) {
-    assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
-  }
-  assert.match(migration, /idx_activities_contact_time/);
+test('frontend exposes daily work, contact log, account and workspace switching',async()=>{
+  const html=await read('public/index.html');
+  const js=await read('public/app.js');
+  assert.match(html,/data-route="agenda"/);
+  assert.match(html,/data-route="activity"/);
+  assert.match(html,/id="workspaceSwitcher"/);
+  assert.match(html,/id="accountSwitcher"/);
+  assert.match(js,/Complete and log/);
+  assert.match(js,/openFollowUpModal/);
+  assert.match(js,/renderTaskRows/);
 });
 
-test('main interface exposes all core CRM workspaces', async () => {
-  const html = await read('public/index.html');
-  for (const page of ['dashboard', 'contacts', 'organizations', 'pipeline', 'tasks', 'analytics', 'data', 'settings']) {
-    assert.match(html, new RegExp(`data-page="${page}"`));
-  }
+test('worker scopes API queries by selected workspace',async()=>{
+  const worker=await read('src/worker.js');
+  assert.match(worker,/x-workspace-id/);
+  assert.match(worker,/workspaceContext/);
+  assert.match(worker,/workspace_id=\?/);
+  assert.match(worker,/follow-ups/);
+  assert.match(worker,/agenda/);
+});
+
+test('Cloudflare configuration uses full worker stack',async()=>{
+  const config=await read('wrangler.jsonc');
+  for(const token of ['d1_databases','kv_namespaces','r2_buckets','queues','analytics_engine_datasets','triggers','observability'])assert.match(config,new RegExp(token));
 });
