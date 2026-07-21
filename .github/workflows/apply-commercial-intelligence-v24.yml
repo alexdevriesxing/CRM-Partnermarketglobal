@@ -23,6 +23,8 @@ jobs:
           node-version: 22
       - name: Apply commercial intelligence pass
         run: node scripts/apply-commercial-intelligence-v24.mjs
+      - name: Apply release correction
+        run: node scripts/fix-commercial-intelligence-v24.mjs
       - name: Validate full repository
         id: validate
         shell: bash
