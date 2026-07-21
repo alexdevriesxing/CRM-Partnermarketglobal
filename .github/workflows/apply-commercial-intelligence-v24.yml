@@ -1,0 +1,38 @@
+name: Apply Commercial Intelligence v2.4
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/commercial-intelligence-v24'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/commercial-intelligence-v24
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply commercial intelligence pass
+        run: node scripts/apply-commercial-intelligence-v24.mjs
+      - name: Validate full repository
+        run: npm run validate
+      - name: Commit materialized source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No source changes to commit."
+          else
+            git commit -m "Add commercial intelligence and CRM data quality center"
+            git push origin HEAD:agent/commercial-intelligence-v24
+          fi
