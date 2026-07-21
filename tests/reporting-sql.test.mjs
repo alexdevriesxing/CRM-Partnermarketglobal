@@ -68,6 +68,8 @@ test('detailed reporting executes against the fully migrated CRM schema', async 
   assert.equal(report.executive.weighted_pipeline, 48000);
   assert.equal(report.executive.activities, 1);
   assert.equal(report.execution.email.delivery_rate, 100);
+  assert.ok(report.execution.tasks.completion_rate <= 100);
+  assert.ok(report.execution.follow_ups.completion_rate <= 100);
   assert.equal(report.team_performance[0].won_deals, 1);
   assert.equal(report.account_performance[0].name, 'Example Account');
   assert.ok(report.trends.revenue.length >= 1);

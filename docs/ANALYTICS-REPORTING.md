@@ -59,7 +59,7 @@ Close-date accuracy is the percentage of measurable won opportunities closed wit
 
 Source performance uses opportunities created during the selected period. This prevents old opportunities from being attributed to a new reporting period merely because their stage later changed.
 
-Task and follow-up on-time rates compare completion timestamps with due timestamps.
+Task and follow-up completion rates use items due during the selected period as the cohort. On-time rates compare completion timestamps with due timestamps, preventing completion percentages from exceeding 100% because of work created in another period.
 
 ## Exports
 

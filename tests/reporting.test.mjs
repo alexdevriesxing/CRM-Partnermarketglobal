@@ -49,3 +49,11 @@ test('v2.5 validation includes reporting modules', async () => {
   assert.match(worker, /getDetailedAnalytics/);
   assert.match(worker, /version:'2\.5\.0'/);
 });
+
+test('due-period cohorts keep execution rates bounded and concentration honest', async () => {
+  const backend = await read('src/reporting.js');
+  assert.match(backend, /taskStats\?\.due/);
+  assert.match(backend, /followUpStats\?\.due/);
+  assert.match(backend, /const concentrationBase = totalWonRevenue/);
+  assert.match(backend, /CAST\(strftime\('%w'/);
+});

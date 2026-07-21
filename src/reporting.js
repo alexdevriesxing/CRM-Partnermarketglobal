@@ -89,7 +89,7 @@ async function validateFilters(env, workspaceId, filters) {
 
 function trendBucket(granularity, alias, field) {
   if (granularity === 'month') return `date(${alias}.${field},'start of month')`;
-  if (granularity === 'week') return `date(${alias}.${field},'weekday 1','-7 days')`;
+  if (granularity === 'week') return `date(${alias}.${field}, '-' || ((CAST(strftime('%w',${alias}.${field}) AS INTEGER)+6)%7) || ' days')`;
   return `date(${alias}.${field})`;
 }
 
@@ -141,19 +141,19 @@ export async function getDetailedAnalytics(env, ctx, request) {
     env.DB.prepare(`SELECT COUNT(*) activities,COUNT(DISTINCT a.organization_id) active_accounts
       FROM activities a WHERE a.workspace_id=? AND ${dateCondition('a','occurred_at')}${activities.sql}`).bind(workspaceId, window.previous_from, window.previous_to, ...activities.bindings).first(),
     env.DB.prepare(`SELECT
-      SUM(CASE WHEN ${dateCondition('t','created_at')} THEN 1 ELSE 0 END) created,
-      SUM(CASE WHEN t.status='completed' AND ${dateCondition('t','completed_at')} THEN 1 ELSE 0 END) completed,
-      SUM(CASE WHEN t.status='completed' AND ${dateCondition('t','completed_at')} AND t.due_at IS NOT NULL AND t.completed_at<=t.due_at THEN 1 ELSE 0 END) completed_on_time,
+      SUM(CASE WHEN ${dateCondition('t','due_at')} THEN 1 ELSE 0 END) due,
+      SUM(CASE WHEN t.status='completed' AND ${dateCondition('t','due_at')} THEN 1 ELSE 0 END) completed,
+      SUM(CASE WHEN t.status='completed' AND ${dateCondition('t','due_at')} AND t.completed_at<=t.due_at THEN 1 ELSE 0 END) completed_on_time,
       SUM(CASE WHEN t.status NOT IN ('completed','cancelled') AND t.due_at<datetime('now') THEN 1 ELSE 0 END) overdue,
-      COALESCE(AVG(CASE WHEN t.status='completed' AND t.due_at IS NOT NULL THEN julianday(t.completed_at)-julianday(t.due_at) END),0) average_due_variance_days
-      FROM tasks t WHERE t.workspace_id=?${tasks.sql}`).bind(window.from, window.to, window.from, window.to, window.from, window.to, workspaceId, ...tasks.bindings).first(),
+      COALESCE(AVG(CASE WHEN t.status='completed' AND ${dateCondition('t','due_at')} THEN julianday(t.completed_at)-julianday(t.due_at) END),0) average_due_variance_days
+      FROM tasks t WHERE t.workspace_id=?${tasks.sql}`).bind(window.from, window.to, window.from, window.to, window.from, window.to, window.from, window.to, workspaceId, ...tasks.bindings).first(),
     env.DB.prepare(`SELECT
-      SUM(CASE WHEN ${dateCondition('f','created_at')} THEN 1 ELSE 0 END) created,
-      SUM(CASE WHEN f.status='completed' AND ${dateCondition('f','completed_at')} THEN 1 ELSE 0 END) completed,
-      SUM(CASE WHEN f.status='completed' AND ${dateCondition('f','completed_at')} AND f.completed_at<=f.due_at THEN 1 ELSE 0 END) completed_on_time,
+      SUM(CASE WHEN ${dateCondition('f','due_at')} THEN 1 ELSE 0 END) due,
+      SUM(CASE WHEN f.status='completed' AND ${dateCondition('f','due_at')} THEN 1 ELSE 0 END) completed,
+      SUM(CASE WHEN f.status='completed' AND ${dateCondition('f','due_at')} AND f.completed_at<=f.due_at THEN 1 ELSE 0 END) completed_on_time,
       SUM(CASE WHEN f.status IN ('open','snoozed') AND COALESCE(f.snoozed_until,f.due_at)<datetime('now') THEN 1 ELSE 0 END) overdue,
-      COALESCE(AVG(CASE WHEN f.status='completed' THEN julianday(f.completed_at)-julianday(f.due_at) END),0) average_due_variance_days
-      FROM follow_ups f WHERE f.workspace_id=?${followUps.sql}`).bind(window.from, window.to, window.from, window.to, window.from, window.to, workspaceId, ...followUps.bindings).first(),
+      COALESCE(AVG(CASE WHEN f.status='completed' AND ${dateCondition('f','due_at')} THEN julianday(f.completed_at)-julianday(f.due_at) END),0) average_due_variance_days
+      FROM follow_ups f WHERE f.workspace_id=?${followUps.sql}`).bind(window.from, window.to, window.from, window.to, window.from, window.to, window.from, window.to, workspaceId, ...followUps.bindings).first(),
     env.DB.prepare(`SELECT COUNT(*) total,
       SUM(CASE WHEN m.status IN ('sent','delivered') THEN 1 ELSE 0 END) successful,
       SUM(CASE WHEN m.status IN ('failed','bounced','suppressed') THEN 1 ELSE 0 END) failed,
@@ -235,7 +235,7 @@ export async function getDetailedAnalytics(env, ctx, request) {
   const closeMeasured = numeric(closedCurrent?.close_date_measured);
   const totalWonRevenue = numeric(closedCurrent?.won_revenue);
   const accountRows = accounts.results || [];
-  const concentrationBase = accountRows.reduce((sum, row) => sum + numeric(row.won_revenue), 0);
+  const concentrationBase = totalWonRevenue;
   const accountPerformance = accountRows.map((row) => ({
     ...row,
     revenue_share: concentrationBase ? Math.round(numeric(row.won_revenue) / concentrationBase * 1000) / 10 : 0,
@@ -277,12 +277,12 @@ export async function getDetailedAnalytics(env, ctx, request) {
     execution: {
       tasks: {
         ...taskStats,
-        completion_rate: completionRate(taskStats?.completed, taskStats?.created),
+        completion_rate: completionRate(taskStats?.completed, taskStats?.due),
         on_time_rate: completionRate(taskStats?.completed_on_time, taskStats?.completed),
       },
       follow_ups: {
         ...followUpStats,
-        completion_rate: completionRate(followUpStats?.completed, followUpStats?.created),
+        completion_rate: completionRate(followUpStats?.completed, followUpStats?.due),
         on_time_rate: completionRate(followUpStats?.completed_on_time, followUpStats?.completed),
       },
       email: {
