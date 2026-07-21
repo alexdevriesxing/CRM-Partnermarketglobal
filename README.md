@@ -1,148 +1,102 @@
-# PartnerMarket Global CRM
+# PartnerMarket Global CRM V2
 
-A comprehensive, Cloudflare-native relationship CRM for PartnerMarketGlobal. It combines contact and organization management, a chronological interaction log, pipeline tracking, follow-up tasks, imports/exports, relationship scoring, analytics, file attachments, role-based access and a complete audit trail in one responsive web application.
+A comprehensive, Cloudflare-native, multi-workspace CRM for managing commercial relationships, accounts, contacts, follow-ups, contact history, tasks, opportunities and analytics.
 
-## What is included
+## What V2 adds
 
-- **Executive dashboard** with relationship, activity, task and pipeline KPIs
-- **Contact management** with ownership, tags, lifecycle, source, geography and relationship health
-- **Contact history** for calls, emails, meetings, notes, WhatsApp, LinkedIn and status changes
-- **Organization intelligence** for clients, investors, partners, suppliers and prospects
-- **Deal pipeline** with stages, probability, weighted value, expected close date and kanban workflow
-- **Tasks and follow-ups** with owner, due date, priority and completion tracking
-- **Analytics** for engagement, activity mix, pipeline performance, sources and team output
-- **Global search** across contacts, companies and deals
-- **CSV import/export** with an included contact template
-- **R2 attachments** linked to contacts and activities
-- **Cloudflare Access authentication** with viewer, member, manager and admin roles
-- **Audit history** for material changes
-- **Automated relationship scoring** through Queue events and a daily Cron Trigger
-- **Responsive, accessible UI** with light/dark theme and keyboard-friendly controls
+- **My Day**: one prioritized workspace for overdue, due-today and upcoming follow-ups and tasks
+- **Follow-ups as first-class records** with channel, owner, priority, cadence, snoozing and one-click completion
+- **Contact Log**: searchable chronological history for calls, emails, meetings, WhatsApp, LinkedIn, notes, files, outcomes, sentiment and next steps
+- **Robust tasks** with type, assignee, priority, status, start/due/reminder dates, recurrence, estimates and CRM links
+- **Multi-workspace databases**: logically isolated workspaces with their own contacts, accounts, activities, deals, tasks, files and analytics
+- **Account focus switcher**: instantly scope contact, log, pipeline and work screens to one organization
+- **Account intelligence** with tiers, territories, buying committees, pipeline, open work and relationship health
+- **Contact intelligence** with consent status, communication preferences, source, health, work queues and full timeline
+- **Unified completion workflow**: complete a follow-up and write the contact log in one action
+- **Saved-view data model**, workspace goals and improved auditability
+- **Polished responsive UI** with light/dark modes, command search and desktop/mobile layouts
 
-## Cloudflare architecture
+## Cloudflare stack
 
-| Layer | Cloudflare service | Purpose |
-|---|---|---|
-| Application and API | Workers | Serves the SPA, REST API, authentication and business logic |
-| Static frontend | Workers Static Assets | Ships the HTML, CSS and JavaScript alongside the Worker |
-| Relational storage | D1 | Contacts, organizations, activities, deals, tasks, imports and audit logs |
-| File storage | R2 | Contact and activity attachments |
-| Fast state | Workers KV | Access JWKS cache, lightweight caching and rate-limit state |
-| Async processing | Queues | Activity events and relationship-score recalculation |
-| Product telemetry | Analytics Engine | Privacy-conscious request and product usage events |
-| Scheduled processing | Cron Triggers | Daily relationship health refresh and overdue-state maintenance |
-| Identity perimeter | Cloudflare Access | SSO, identity assertions and application protection |
-| Operations | Workers Observability | Logs, traces and runtime inspection |
+| Layer | Service |
+|---|---|
+| Application and REST API | Workers |
+| Frontend | Workers Static Assets |
+| CRM relational data | D1 |
+| Private attachments | R2 |
+| Access JWKS and fast state | KV |
+| Relationship score processing | Queues |
+| Product telemetry | Analytics Engine |
+| Daily maintenance | Cron Triggers |
+| Authentication | Cloudflare Access |
+| Runtime inspection | Workers Observability |
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production setup.
+## Multi-workspace model
 
-## Local development
+A workspace is a logically separate CRM database. Every primary record carries a `workspace_id`, and every API query is scoped server-side to the selected workspace. Users switch databases from the sidebar through the `x-workspace-id` request context.
 
-### Prerequisites
+This design provides fast switching and strict logical separation inside one D1 database. Teams needing physically separate D1 databases can deploy one Worker environment per database using the same codebase and separate Wrangler environments.
 
-- Node.js 20 or newer
-- A Cloudflare account with Workers enabled
-- Wrangler authentication for Cloudflare-backed local development
+## Core workflows
 
-### Fast UI/API preview without Cloudflare credentials
+### Follow-up workflow
+
+1. Schedule a follow-up against a contact, account or deal.
+2. It appears in **My Day** as overdue, today or upcoming.
+3. Complete it with an interaction type, outcome and notes.
+4. The CRM marks the follow-up complete and writes the contact log simultaneously.
+5. Recurring follow-ups automatically create the next occurrence.
+
+### Contact log
+
+Every call, email, meeting, message or note records:
+
+- date and time
+- direction
+- contact, account and deal links
+- subject and notes
+- outcome and sentiment
+- next step
+- optional follow-up date
+
+### Tasks
+
+Tasks include ownership, type, priority, status, start date, due date, reminder, recurrence, estimates and links to contacts, accounts and deals.
+
+## Local preview
 
 ```bash
+npm install
 npm run dev:mock
 ```
 
-Open `http://localhost:8787`. This starts an in-memory development server with demo contacts, organizations, deals, activities and tasks.
+Open `http://localhost:8787`.
 
-### Full Wrangler development
+The mock server includes two workspaces so database switching, account focus, follow-up completion and task workflows can be tested without Cloudflare credentials.
 
-```bash
-npm install
-npm run db:migrate:local
-npm run db:seed:local
-npm run dev
-```
-
-The `dev` script runs with local development authentication. Wrangler persists local D1/KV/R2 data under `.wrangler/`.
-
-## Validate the project
+## Validation
 
 ```bash
-npm install
 npm run validate
 ```
 
-The validation suite checks JavaScript syntax, domain rules, CSV behavior, API CRUD flows, activity history, deal and task updates, imports, SPA routes, schema integrity and Cloudflare bindings.
+The test suite covers:
 
-## Production deployment
+- relationship scoring
+- follow-up due buckets and agenda grouping
+- recurring tasks and follow-ups
+- pipeline forecasting
+- CSV import/export
+- multi-workspace schema isolation
+- frontend workflow structure
+- mock API database switching
+- contact-log creation from follow-up completion
+- task creation and completion
 
-1. Provision the required Cloudflare resources.
-2. Replace the placeholder IDs and Access settings in `wrangler.jsonc`.
-3. Configure Cloudflare Access for the production Worker hostname or custom domain.
-4. Apply D1 migrations.
-5. Deploy the Worker.
+## Production upgrade
 
-```bash
-npm install
-npm run db:migrate:remote
-npm run deploy
-```
+Existing installations apply `migrations/0003_multi_workspace_daily_work.sql`. The migration creates a default PartnerMarket Global workspace and assigns all existing records and users to it, preserving the current CRM data.
 
-For exact commands and GitHub Actions secrets, follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Before deployment, replace placeholder binding IDs and Access settings in `wrangler.jsonc`, apply D1 migrations and trigger the manual Cloudflare deployment workflow.
 
-## Authentication and roles
-
-Production defaults to `AUTH_MODE=access`. The Worker validates Cloudflare Access JWTs against your team JWKS and application audience before API access is allowed.
-
-The first authenticated account is provisioned as `admin`; subsequent accounts default to `member`. Roles can be changed directly in D1 or through a future admin user-management workflow.
-
-| Role | Capabilities |
-|---|---|
-| Viewer | Read CRM information and analytics |
-| Member | Create and update contacts, activities, tasks and deals |
-| Manager | Member capabilities plus broader commercial management actions |
-| Admin | Full workspace and user administration |
-
-## Data model
-
-The core relational model is deliberately normalized:
-
-- `organizations` have many `contacts`
-- contacts and organizations can have many `activities`, `deals`, `tasks` and `attachments`
-- every material mutation can create an `audit_log` entry
-- imports are tracked in `imports`
-- `users` are provisioned from verified Cloudflare Access identities
-
-Database definitions live in `migrations/0001_initial.sql`; realistic demo data lives in `migrations/0002_seed_demo.sql`.
-
-## API surface
-
-The Worker exposes REST endpoints under `/api` for dashboard data, analytics, search, contacts, organizations, activities, deals, tasks, imports, attachments and users. All production API routes require a valid Cloudflare Access identity.
-
-## CSV import
-
-Download `public/contact-import-template.csv`, populate the rows and upload it from **Import & export**. Supported contact fields include first name, last name, email, phone, title, organization, country, city, lifecycle, source, owner, tags and notes.
-
-## Security notes
-
-- Access JWTs are verified cryptographically and audience-checked.
-- Security headers and a restrictive Content Security Policy are applied centrally.
-- Audit entries record actor, entity, action and a hashed request IP where available.
-- Attachments use R2 object keys rather than public bucket URLs.
-- Secrets belong in Wrangler secrets or GitHub Actions secrets, never in the repository.
-- The application does not expose direct D1, KV or R2 credentials to the browser.
-
-## Repository structure
-
-```text
-.github/workflows/   CI and Cloudflare deployment workflows
-docs/                Architecture and deployment documentation
-migrations/          D1 schema and demo seed
-public/              Responsive single-page CRM frontend
-scripts/             Mock server and Cloudflare configuration helpers
-src/                 Worker API and reusable domain logic
-tests/               Node test suite
-wrangler.jsonc       Cloudflare Worker and resource bindings
-```
-
-## License
-
-Proprietary software for PartnerMarketGlobal. See [LICENSE](LICENSE).
+See [docs/V2-ARCHITECTURE.md](docs/V2-ARCHITECTURE.md) and [docs/V2-DEPLOYMENT.md](docs/V2-DEPLOYMENT.md).

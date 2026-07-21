@@ -5,8 +5,6 @@
   "type": "module",
   "description": "Cloudflare-native multi-workspace relationship CRM for PartnerMarketGlobal",
   "scripts": {
-    "prepare": "node scripts/materialize-v2.mjs",
-    "materialize": "node scripts/materialize-v2.mjs",
     "dev": "wrangler dev --var AUTH_MODE:dev --var ENVIRONMENT:development",
     "dev:mock": "node scripts/dev-server.mjs",
     "test": "node --test tests/*.test.mjs",
@@ -22,7 +20,5 @@
   "devDependencies": {
     "wrangler": "4.112.0"
   },
-  "engines": {
-    "node": ">=20"
-  }
+  "engines": { "node": ">=20" }
 }
