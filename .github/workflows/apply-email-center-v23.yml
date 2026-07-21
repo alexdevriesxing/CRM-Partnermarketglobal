@@ -25,6 +25,7 @@ jobs:
         run: |
           node scripts/apply-email-center-v23.mjs
           node scripts/fix-email-center-v23.mjs
+          node scripts/polish-email-center-v23.mjs
       - name: Validate full repository
         id: validate
         shell: bash
@@ -47,6 +48,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No source changes to commit."
           else
-            git commit -m "Add first-class Email Center and CRM accessibility polish"
+            git commit -m "Polish account-scoped Email Center analytics"
             git push origin HEAD:agent/email-center-v23
           fi
