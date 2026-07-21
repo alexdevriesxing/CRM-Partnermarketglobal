@@ -23,8 +23,6 @@ jobs:
           node-version: 22
       - name: Apply Email Center pass
         run: node scripts/apply-email-center-v23.mjs
-      - name: Install dependencies
-        run: npm ci
       - name: Validate full repository
         run: npm run validate
       - name: Commit materialized source
