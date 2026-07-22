@@ -9,6 +9,7 @@ const prospectingState = {
   overview: null,
   campaigns: [],
   results: null,
+  error: '',
 };
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[character]);
@@ -81,7 +82,7 @@ export async function renderProspecting(root) {
     <section class="metrics-grid prospecting-metrics">${metric('Campaigns', totals.campaigns, 'Imported opportunity lists')}${metric('Prospects', totals.prospects, 'Campaign memberships')}${metric('Ready', totals.ready, 'Prepared for outreach')}${metric('Contacted', totals.contacted, 'Outreach started')}${metric('Replies', Number(totals.replied || 0) + Number(totals.qualified || 0), 'Response momentum')}</section>
     <section class="prospecting-layout">
       <aside class="panel prospecting-campaign-panel"><header class="panel-header"><div><h2>Opportunity lists</h2><p>Choose a spreadsheet tab</p></div></header><div class="prospecting-campaigns"><button class="prospecting-campaign ${prospectingState.campaign ? '' : 'active'}" type="button" data-campaign-id=""><span><strong>All opportunities</strong><small>Combined prospect database</small></span><span><b>${Number(totals.prospects || 0)}</b><small>prospects</small></span></button>${prospectingState.campaigns.map(campaignCard).join('')}</div></aside>
-      <section class="panel prospecting-results"><div class="toolbar prospecting-toolbar"><input class="search-input" id="prospectingSearch" type="search" value="${escapeHtml(prospectingState.q)}" placeholder="Search company, country, email or fit…"><select id="prospectingStatus"><option value="">All outreach statuses</option>${['not_contacted','researching','ready','contacted','replied','qualified','disqualified','do_not_contact'].map((status) => `<option value="${status}" ${prospectingState.status === status ? 'selected' : ''}>${titleCase(status)}</option>`).join('')}</select><button class="button secondary" type="button" id="prospectingRefresh">Refresh</button></div>
+      <section class="panel prospecting-results"><div class="toolbar prospecting-toolbar"><input class="search-input" id="prospectingSearch" type="search" value="${escapeHtml(prospectingState.q)}" placeholder="Search company, country, email or fit…"><select id="prospectingStatus"><option value="">All outreach statuses</option>${['not_contacted','researching','ready','contacted','replied','qualified','disqualified','do_not_contact'].map((status) => `<option value="${status}" ${prospectingState.status === status ? 'selected' : ''}>${titleCase(status)}</option>`).join('')}</select><button class="button secondary" type="button" id="prospectingRefresh">Refresh</button></div>${prospectingState.error ? `<div class="prospecting-notice" role="alert">${escapeHtml(prospectingState.error)}</div>` : ''}
         <div class="table-wrap"><table><thead><tr><th>Account</th><th>Contact</th><th>Email status</th><th>Why this fits</th><th>Outreach</th><th>Actions</th></tr></thead><tbody>${results.items.length ? results.items.map(prospectRow).join('') : '<tr><td colspan="6"><div class="empty-state"><strong>No matching prospects</strong><span>Change the campaign, search or status filter.</span></div></td></tr>'}</tbody></table></div>
         <footer class="pagination"><span>Page ${Number(results.page)} of ${Number(results.pages)} · ${Number(results.total).toLocaleString()} records</span><div><button class="small-button" type="button" data-prospect-page="${Math.max(1, Number(results.page) - 1)}" ${Number(results.page) <= 1 ? 'disabled' : ''}>Previous</button><button class="small-button" type="button" data-prospect-page="${Math.min(Number(results.pages), Number(results.page) + 1)}" ${Number(results.page) >= Number(results.pages) ? 'disabled' : ''}>Next</button></div></footer>
       </section>
@@ -95,8 +96,8 @@ export async function renderProspecting(root) {
   root.querySelectorAll('[data-prospect-page]').forEach((button) => button.addEventListener('click', async () => { prospectingState.page = Number(button.dataset.prospectPage); await renderProspecting(root); }));
   root.querySelectorAll('[data-prospect-status]').forEach((select) => select.addEventListener('change', async () => {
     select.disabled = true;
-    try { await api(`/api/prospecting/members/${encodeURIComponent(select.dataset.prospectStatus)}`, { method:'PATCH', body:{ outreach_status:select.value } }); }
-    catch (error) { window.alert(error.message); }
+    try { await api(`/api/prospecting/members/${encodeURIComponent(select.dataset.prospectStatus)}`, { method:'PATCH', body:{ outreach_status:select.value } }); prospectingState.error = ''; }
+    catch (error) { prospectingState.error = `Unable to update outreach status: ${error.message}`; }
     finally { await renderProspecting(root); }
   }));
   root.querySelectorAll('[data-prospect-email]').forEach((button) => button.addEventListener('click', async () => {

@@ -87,7 +87,9 @@ function renderFatal(error){$('#content').innerHTML=`<section class="panel" styl
 
 function navigate(route){
   const known=['dashboard','agenda','contacts','organizations','prospecting','activity','email','pipeline','tasks','analytics','intelligence','data','settings'];
-  state.route=known.includes(route)?route:'dashboard';
+  const nextRoute=known.includes(route)?route:'dashboard';
+  if(nextRoute!==state.route)closeDrawer();
+  state.route=nextRoute;
   if(location.hash!==`#${state.route}`)history.replaceState(null,'',`#${state.route}`);
   const routeTitles={dashboard:'Dashboard',agenda:'My Day',contacts:'Contacts',organizations:'Accounts',prospecting:'Prospecting',activity:'Contact Log',email:'Email Center',pipeline:'Pipeline',tasks:'Tasks',analytics:'Analytics',intelligence:'Commercial Intelligence',data:'Import & export',settings:'Settings'};
   $$('.nav-item[data-route]').forEach((item)=>{const active=item.dataset.route===state.route;item.classList.toggle('active',active);if(active)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current');});

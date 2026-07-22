@@ -21,12 +21,18 @@ test('prospecting API and navigation are first-class CRM features', async () => 
   assert.match(module, /Invalid outreach status/);
   assert.match(app, /renderProspecting/);
   assert.match(index, /data-route="prospecting"/);
+  assert.doesNotMatch(await read('public/prospecting.js'), /window\.alert/);
 });
 
 test('route navigation updates every sidebar item without a selector type error', async () => {
   const app = await read('public/app.js');
   assert.match(app, /\$\$\('\.nav-item\[data-route\]'\)\.forEach/);
   assert.doesNotMatch(app, /(?<!\$)\$\('\.nav-item\[data-route\]'\)\.forEach/);
+});
+
+test('route changes dismiss a stale record drawer', async () => {
+  const app = await read('public/app.js');
+  assert.match(app, /if\(nextRoute!==state\.route\)closeDrawer\(\)/);
 });
 
 test('production authentication is owner-only and cannot use a bypass mode', async () => {
