@@ -19,7 +19,12 @@ function bool(value) { return value === true || value === 1 || value === '1' ? 1
 async function bodyJson(request) {
   const contentType = request.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) throw Object.assign(new Error('Expected application/json'), { status: 415 });
-  return request.json();
+  const maximumBytes = 6 * 1024 * 1024;
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > maximumBytes) throw Object.assign(new Error('Email request body is too large'), { status: 413 });
+  const raw = await request.text();
+  if (new TextEncoder().encode(raw).byteLength > maximumBytes) throw Object.assign(new Error('Email request body is too large'), { status: 413 });
+  try { return JSON.parse(raw); } catch { throw Object.assign(new Error('Invalid JSON request body'), { status: 400 }); }
 }
 
 function role(ctx) { return ctx.workspace?.member_role || ctx.user?.role || 'viewer'; }

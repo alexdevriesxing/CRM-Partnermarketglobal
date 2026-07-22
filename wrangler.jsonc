@@ -20,22 +20,23 @@
     "APP_NAME": "PartnerMarket Global CRM",
     "ENVIRONMENT": "production",
     "AUTH_MODE": "access",
+    "OWNER_EMAIL": "alexdevriesxing@gmail.com",
     "ACCESS_TEAM_DOMAIN": "REPLACE_WITH_YOUR_TEAM.cloudflareaccess.com",
     "ACCESS_AUD": "REPLACE_WITH_ACCESS_APPLICATION_AUD",
-    "EMAIL_ALLOWED_DOMAINS": "goldendragoncapital.co,devriessalesconsultancy.com,partnermarketglobal.com"
+    "EMAIL_ALLOWED_DOMAINS": "goldendragoncapital.co,devriessalesconsultancy.com"
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "partnermarket-crm-db",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "197a8a05-411d-44f6-a3b5-6f7cfe79d1a9",
       "migrations_dir": "migrations"
     }
   ],
   "kv_namespaces": [
     {
       "binding": "CACHE",
-      "id": "REPLACE_WITH_KV_NAMESPACE_ID"
+      "id": "e572eb0a369a445689da5f73e7bd694c"
     }
   ],
   "r2_buckets": [

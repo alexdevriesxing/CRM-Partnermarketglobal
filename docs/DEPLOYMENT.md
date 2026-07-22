@@ -1,125 +1,81 @@
 # Cloudflare deployment
 
-## 1. Install and authenticate
+## Production architecture
+
+The CRM deploys as a Worker with Static Assets, D1, KV, R2, Queues, Analytics Engine, a Cron Trigger and Observability. A second private Worker owns the Cloudflare Email Sending binding. Cloudflare Access protects the public CRM hostname, and the application independently restricts production access to `OWNER_EMAIL`.
+
+## Provisioning
+
+Authenticate and create the named resources once:
 
 ```bash
 npm install
 npx wrangler login
-```
-
-For CI, use a scoped Cloudflare API token rather than interactive login.
-
-## 2. Provision resources
-
-Create the required resources once:
-
-```bash
 npx wrangler d1 create partnermarket-crm-db
-npx wrangler kv namespace create CACHE
+npx wrangler kv namespace create partnermarket-crm-cache
 npx wrangler r2 bucket create partnermarket-crm-attachments
-npx wrangler queues create partnermarket-crm-activity
 npx wrangler queues create partnermarket-crm-activity-dlq
+npx wrangler queues create partnermarket-crm-activity
 ```
 
-Copy the returned D1 database ID and KV namespace ID into `wrangler.jsonc`.
+Put the returned D1 and KV identifiers in `wrangler.jsonc`. R2 and Queue bindings use their resource names.
 
-R2 and Queues are bound by resource name in the supplied configuration. Analytics Engine, Cron Triggers, Static Assets and Observability are configured in the same file.
-
-## 3. Configure Cloudflare Access
+## Owner-only Cloudflare Access
 
 In Zero Trust:
 
-1. Add a **Self-hosted** Access application for the Worker hostname or production custom domain.
-2. Add an allow policy for the identities that should use the CRM.
-3. Copy the application **AUD** tag.
-4. Note your Access team domain, for example `your-team.cloudflareaccess.com`.
-5. Replace these values in `wrangler.jsonc`:
-   - `ACCESS_TEAM_DOMAIN`
-   - `ACCESS_AUD`
+1. Create a Self-hosted Access application for the final Worker hostname.
+2. Create an Allow policy containing only `alexdevriesxing@gmail.com`.
+3. Copy the application AUD tag into `ACCESS_AUD`.
+4. Copy the team domain, such as `your-team.cloudflareaccess.com`, into `ACCESS_TEAM_DOMAIN`.
+5. Keep `AUTH_MODE=access`, `ENVIRONMENT=production`, and `OWNER_EMAIL=alexdevriesxing@gmail.com`.
 
-Production uses `AUTH_MODE=access`. Do not deploy production with `AUTH_MODE=dev`.
+The Worker refuses a production bypass mode and rejects a valid Access identity that is not the configured owner.
 
-## 4. Apply the database schema
+## Database and private spreadsheet seed
+
+Apply migrations first:
 
 ```bash
 npm run db:migrate:remote
 ```
 
-The demo seed is optional and should normally be used only for a non-production environment:
+The repository bootstrap contains only the owner and workspace. The commercial workbook is intentionally excluded from this public repository. Generate and execute its idempotent SQL chunks from a private location; never add those files to Git.
+
+Expected initial production counts are 14 campaigns, 700 campaign memberships, 553 deduplicated accounts, 560 contacts, one user and two sender identities.
+
+## Email deployment order
+
+Enable and authenticate both domains, then deploy the private Email Worker before the CRM Worker:
 
 ```bash
-npm run db:seed:remote
-```
-
-## 5. Validate and deploy
-
-```bash
+npx wrangler email sending enable goldendragoncapital.co
+npx wrangler email sending enable devriessalesconsultancy.com
 npm run validate
+npm run preflight:production
+npm run deploy:email
 npm run deploy
 ```
 
-Wrangler deploys the Worker code and static assets together.
+Only set `EMAIL_DOMAINS_ONBOARDED=true` after the return-path MX, SPF, DKIM and DMARC records resolve publicly for both domains.
 
-## 6. Custom domain
+## GitHub Actions
 
-After the first deployment, add a Workers custom domain in Cloudflare and ensure the same hostname is protected by the Access application.
+The manual production workflow requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as GitHub environment secrets and `EMAIL_DOMAINS_ONBOARDED=true` as a production environment variable. Use a narrowly scoped token that can deploy Workers and apply D1 migrations. Private prospect SQL is not run in CI.
 
-## 7. GitHub Actions
+## Post-deployment verification
 
-The repository includes:
+1. Confirm an anonymous API request is rejected and the owner can complete Access login.
+2. Verify the dashboard, Prospecting, Accounts, Email Center and Analytics routes.
+3. Confirm D1 row counts and that no demo records exist.
+4. Change one prospect outreach state and edit an account.
+5. Send one controlled message from each approved identity to the owner mailbox.
+6. Confirm provider message IDs, CRM activities, SPF, DKIM and DMARC results.
+7. Upload and download a small attachment and inspect Worker/Queue logs.
 
-- `.github/workflows/ci.yml` for syntax and automated tests
-- `.github/workflows/deploy.yml` for deployment from `main`
+## Operations
 
-Configure these repository secrets:
-
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
-
-The API token needs only the permissions required for the bound resources and Worker deployment. Use the narrowest practical scope.
-
-Before enabling the deploy workflow, commit real D1/KV IDs and Access settings to `wrangler.jsonc`. IDs are resource identifiers, not API secrets; API tokens remain in GitHub Secrets.
-
-## 8. First-user bootstrap
-
-The first identity that successfully enters the application is automatically created as an admin. Later users default to member.
-
-To inspect users:
-
-```bash
-npx wrangler d1 execute partnermarket-crm-db --remote \
-  --command="SELECT id,email,name,role,is_active FROM users ORDER BY created_at"
-```
-
-To change a role:
-
-```bash
-npx wrangler d1 execute partnermarket-crm-db --remote \
-  --command="UPDATE users SET role='manager' WHERE email='person@example.com'"
-```
-
-Allowed roles are `viewer`, `member`, `manager` and `admin`.
-
-## 9. Post-deployment verification
-
-Check these flows after deployment:
-
-1. Access policy blocks unauthorized identities.
-2. Authorized identity reaches the dashboard.
-3. Create a contact and organization.
-4. Add a call or meeting to the contact timeline.
-5. Add a deal and move its stage.
-6. Add and complete a follow-up task.
-7. Upload and download an attachment.
-8. Import a small CSV file.
-9. Confirm audit rows are being written.
-10. Check Worker logs, Queue delivery and the daily Cron Trigger.
-
-## 10. Backup and operational hygiene
-
-- Export D1 data on a regular schedule appropriate to the business.
-- Configure R2 lifecycle and retention policies where required.
-- Review failed Queue messages and the dead-letter queue.
-- Rotate Cloudflare API tokens and remove inactive CRM users.
-- Monitor Worker errors and latency in Observability.
-- Keep dependencies and the Wrangler version current through reviewed pull requests.
+- Export D1 on a regular schedule and test restore procedures.
+- Review failed email, Queue dead letters, opt-outs and consent changes.
+- Rotate Cloudflare and GitHub credentials, keep dependencies current, and review Observability errors.
+- Keep the private workbook and generated SQL outside the public repository.

@@ -13,6 +13,7 @@ import {
 import { createEmailSender, getEmailHealth, getEmailOverview, listEmailMessages, listEmailSenders, sendCrmEmail, updateEmailSender } from './email.js';
 import { getCommercialIntelligence } from './intelligence.js';
 import { getDetailedAnalytics } from './reporting.js';
+import { getProspectingOverview, listProspectingCampaigns, listProspects, updateProspectStatus } from './prospecting.js';
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
 const SECURITY_HEADERS = {
@@ -21,22 +22,36 @@ const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
   'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+  'strict-transport-security': 'max-age=31536000; includeSubDomains',
 };
 
 function json(data, status = 200, headers = {}) {
-  return new Response(JSON.stringify(data), { status, headers: { ...JSON_HEADERS, ...SECURITY_HEADERS, ...headers } });
+  return new Response(JSON.stringify(data), { status, headers: { ...JSON_HEADERS, ...SECURITY_HEADERS, 'cache-control':'no-store', ...headers } });
 }
 function error(message, status = 400, details) { return json({ error: message, ...(details ? { details } : {}) }, status); }
 async function bodyJson(request) {
   const contentType = request.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) throw Object.assign(new Error('Expected application/json'), { status: 415 });
-  return request.json();
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > 2 * 1024 * 1024) throw Object.assign(new Error('JSON request body is too large'), { status: 413 });
+  const raw = await request.text();
+  if (new TextEncoder().encode(raw).byteLength > 2 * 1024 * 1024) throw Object.assign(new Error('JSON request body is too large'), { status: 413 });
+  try { return JSON.parse(raw); } catch { throw Object.assign(new Error('Invalid JSON request body'), { status: 400 }); }
 }
 function parts(pathname) { return pathname.split('/').filter(Boolean).map(decodeURIComponent); }
 function nowIso() { return new Date().toISOString(); }
 function id() { return crypto.randomUUID(); }
 function bool(value) { return value === true || value === 1 || value === '1' ? 1 : 0; }
 function text(value, fallback = null) { const result = String(value ?? '').trim(); return result || fallback; }
+function requireSameOriginWrite(request) {
+  if (['GET','HEAD','OPTIONS'].includes(request.method)) return;
+  if (request.headers.get('sec-fetch-site') === 'cross-site') throw Object.assign(new Error('Cross-site write request blocked'), { status: 403 });
+  const origin = request.headers.get('origin');
+  if (!origin) return;
+  try {
+    if (new URL(origin).host !== new URL(request.url).host) throw new Error('mismatch');
+  } catch { throw Object.assign(new Error('Cross-site write request blocked'), { status: 403 }); }
+}
 
 function contactRecord(row) {
   return row ? { ...row, tags: parseJson(row.tags_json, []), custom_fields: parseJson(row.custom_fields_json, {}), organization: row.organization_name || null } : null;
@@ -65,6 +80,7 @@ async function verifyAccessJwt(token, env) {
   if (segments.length !== 3) throw new Error('Invalid access token');
   const header = JSON.parse(new TextDecoder().decode(b64UrlDecode(segments[0])));
   const payload = JSON.parse(new TextDecoder().decode(b64UrlDecode(segments[1])));
+  if (header.alg !== 'RS256' || !header.kid) throw new Error('Invalid access token header');
   const jwks = await accessKeys(env);
   const jwk = jwks.keys.find((candidate) => candidate.kid === header.kid);
   if (!jwk) throw new Error('Unknown access signing key');
@@ -74,18 +90,22 @@ async function verifyAccessJwt(token, env) {
   const now = Math.floor(Date.now() / 1000);
   const issuer = `https://${String(env.ACCESS_TEAM_DOMAIN || '').replace(/^https?:\/\//, '').replace(/\/$/, '')}`;
   const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-  if (payload.exp && payload.exp < now) throw new Error('Access token expired');
+  if (!Number.isFinite(payload.exp)) throw new Error('Access token has no expiry');
+  if (payload.exp < now) throw new Error('Access token expired');
   if (payload.nbf && payload.nbf > now) throw new Error('Access token not active');
   if (payload.iss !== issuer) throw new Error('Invalid access token issuer');
-  if (env.ACCESS_AUD && !audiences.includes(env.ACCESS_AUD)) throw new Error('Invalid access token audience');
+  if (!env.ACCESS_AUD || !audiences.includes(env.ACCESS_AUD)) throw new Error('Invalid access token audience');
+  if (!payload.email) throw new Error('Access token has no email identity');
   return payload;
 }
 
 async function currentUser(request, env) {
   const mode = String(env.AUTH_MODE || 'access').toLowerCase();
+  const production = String(env.ENVIRONMENT || '').toLowerCase() === 'production';
+  if (production && mode !== 'access') throw Object.assign(new Error('Production authentication is not configured safely'), { status: 503 });
   let identity;
-  if (mode === 'dev' || mode === 'disabled') {
-    identity = { email: request.headers.get('x-dev-user-email') || 'alex@example.com', name: request.headers.get('x-dev-user-name') || 'Alex de Vries' };
+  if (mode === 'dev' && !production) {
+    identity = { email: request.headers.get('x-dev-user-email') || 'alexdevriesxing@gmail.com', name: request.headers.get('x-dev-user-name') || 'Alex de Vries' };
   } else {
     const token = request.headers.get('cf-access-jwt-assertion');
     if (!token) throw Object.assign(new Error('Authentication required'), { status: 401 });
@@ -93,6 +113,9 @@ async function currentUser(request, env) {
     identity = { email: payload.email, name: payload.name || payload.email?.split('@')[0] || 'CRM User' };
   }
   if (!identity.email) throw Object.assign(new Error('Authenticated identity has no email'), { status: 401 });
+  const ownerEmail = String(env.OWNER_EMAIL || '').trim().toLowerCase();
+  if (production && !ownerEmail) throw Object.assign(new Error('Personal owner identity is not configured'), { status: 503 });
+  if (ownerEmail && identity.email.toLowerCase() !== ownerEmail) throw Object.assign(new Error('This personal CRM is restricted to its owner'), { status: 403 });
   const existing = await env.DB.prepare('SELECT * FROM users WHERE lower(email)=lower(?) LIMIT 1').bind(identity.email).first();
   if (existing) {
     if (!existing.is_active) throw Object.assign(new Error('Your CRM account is disabled'), { status: 403 });
@@ -347,6 +370,27 @@ async function createOrganization(env,ctx,request) {
   const result=(await getOrganization(env,ctx,organizationId)).organization; await audit(env,ctx,request,'create','organization',organizationId,null,result); return result;
 }
 
+async function updateOrganization(env,ctx,request,organizationId) {
+  requireRole(ctx.user,ctx.workspace,['admin','manager','member']);
+  const before=await env.DB.prepare('SELECT * FROM organizations WHERE id=? AND workspace_id=?').bind(organizationId,ctx.workspace.id).first();
+  if(!before)throw Object.assign(new Error('Account not found'),{status:404});
+  const data=await bodyJson(request);
+  const allowed=['name','domain','industry','type','status','country','city','website','linkedin_url','phone','description','owner_id','annual_value','relationship_score','last_contact_at','next_follow_up_at','account_tier','territory','employee_count','revenue_band'];
+  const sets=[];const values=[];
+  for(const key of allowed)if(Object.hasOwn(data,key)){
+    sets.push(`${key}=?`);
+    values.push(['annual_value','employee_count'].includes(key)?Number(data[key]||0):key==='relationship_score'?clamp(data[key],0,100):['last_contact_at','next_follow_up_at'].includes(key)?toIsoDate(data[key]):text(data[key]));
+  }
+  if(Object.hasOwn(data,'tags')){sets.push('tags_json=?');values.push(JSON.stringify(normalizeTags(data.tags)));}
+  if(Object.hasOwn(data,'custom_fields')){sets.push('custom_fields_json=?');values.push(JSON.stringify(data.custom_fields||{}));}
+  if(!sets.length)return organizationRecord(before);
+  sets.push('updated_at=CURRENT_TIMESTAMP');
+  await env.DB.prepare(`UPDATE organizations SET ${sets.join(',')} WHERE id=? AND workspace_id=?`).bind(...values,organizationId,ctx.workspace.id).run();
+  const after=(await getOrganization(env,ctx,organizationId)).organization;
+  await audit(env,ctx,request,'update','organization',organizationId,before,after);
+  return after;
+}
+
 async function listActivities(env,ctx,request) {
   const url=new URL(request.url); const conditions=['a.workspace_id=?']; const bindings=[ctx.workspace.id];
   for (const [param,column] of [['contact','a.contact_id'],['account','a.organization_id'],['deal','a.deal_id'],['type','a.type'],['user','a.user_id']]) { const value=text(url.searchParams.get(param),''); if(value){conditions.push(`${column}=?`);bindings.push(value);} }
@@ -411,7 +455,7 @@ async function analytics(env,ctx){const ws=ctx.workspace.id;const [activityTypes
   env.DB.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) completed,SUM(CASE WHEN status IN ('open','snoozed') AND COALESCE(snoozed_until,due_at)<datetime('now') THEN 1 ELSE 0 END) overdue FROM follow_ups WHERE workspace_id=?`).bind(ws).first(),
   env.DB.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) completed,SUM(CASE WHEN status NOT IN ('completed','cancelled') AND due_at<datetime('now') THEN 1 ELSE 0 END) overdue FROM tasks WHERE workspace_id=?`).bind(ws).first(),
   env.DB.prepare(`SELECT stage,COUNT(*) count,COALESCE(SUM(value),0) value FROM deals WHERE workspace_id=? GROUP BY stage`).bind(ws).all(),
-  env.DB.prepare(`SELECT o.id,o.name,o.account_tier,o.relationship_score,COUNT(DISTINCT c.id) contacts,COUNT(DISTINCT a.id) activities,COALESCE(SUM(DISTINCT CASE WHEN d.stage NOT IN ('lost') THEN d.value ELSE 0 END),0) pipeline FROM organizations o LEFT JOIN contacts c ON c.organization_id=o.id LEFT JOIN activities a ON a.organization_id=o.id AND a.occurred_at>=datetime('now','-90 days') LEFT JOIN deals d ON d.organization_id=o.id WHERE o.workspace_id=? GROUP BY o.id ORDER BY pipeline DESC LIMIT 10`).bind(ws).all(),
+  env.DB.prepare(`WITH contact_counts AS (SELECT organization_id,COUNT(*) contacts FROM contacts WHERE workspace_id=? GROUP BY organization_id),activity_counts AS (SELECT organization_id,COUNT(*) activities FROM activities WHERE workspace_id=? AND occurred_at>=datetime('now','-90 days') GROUP BY organization_id),pipelines AS (SELECT organization_id,COALESCE(SUM(CASE WHEN stage!='lost' THEN value ELSE 0 END),0) pipeline FROM deals WHERE workspace_id=? GROUP BY organization_id) SELECT o.id,o.name,o.account_tier,o.relationship_score,COALESCE(c.contacts,0) contacts,COALESCE(a.activities,0) activities,COALESCE(d.pipeline,0) pipeline FROM organizations o LEFT JOIN contact_counts c ON c.organization_id=o.id LEFT JOIN activity_counts a ON a.organization_id=o.id LEFT JOIN pipelines d ON d.organization_id=o.id WHERE o.workspace_id=? ORDER BY pipeline DESC LIMIT 10`).bind(ws,ws,ws,ws).all(),
 ]);return{activity_types:activityTypes.results,users:users.results,revenue_by_month:months.results,follow_up_stats:followUpStats,task_stats:taskStats,conversion:conversion.results,top_accounts:accounts.results};}
 
 async function globalSearch(env,ctx,request){const q=text(new URL(request.url).searchParams.get('q'),'');if(q.length<2)return{contacts:[],organizations:[],deals:[]};const m=`%${q.toLowerCase()}%`;const [contacts,organizations,deals]=await Promise.all([
@@ -432,7 +476,7 @@ const importId=id();await env.DB.prepare('INSERT INTO imports (id,user_id,file_n
 async function exportContacts(env,ctx){const rows=await env.DB.prepare(`SELECT c.*,o.name organization FROM contacts c LEFT JOIN organizations o ON o.id=c.organization_id WHERE c.workspace_id=? ORDER BY c.first_name,c.last_name`).bind(ctx.workspace.id).all();return new Response(contactsToCsv(rows.results.map(contactRecord)),{headers:{...SECURITY_HEADERS,'content-type':'text/csv; charset=utf-8','content-disposition':`attachment; filename="${ctx.workspace.slug}-contacts.csv"`}});}
 
 async function uploadAttachment(env,ctx,request){requireRole(ctx.user,ctx.workspace,['admin','manager','member']);if(!env.ATTACHMENTS)throw Object.assign(new Error('R2 attachment storage is not configured'),{status:503});const form=await request.formData();const file=form.get('file');if(!(file instanceof File))throw new Error('A file is required');if(file.size>20*1024*1024)throw new Error('Files may not exceed 20 MB');const attachmentId=id();const key=`${ctx.workspace.id}/${new Date().toISOString().slice(0,10)}/${attachmentId}-${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;await env.ATTACHMENTS.put(key,file.stream(),{httpMetadata:{contentType:file.type||'application/octet-stream'}});await env.DB.prepare('INSERT INTO attachments (id,workspace_id,activity_id,contact_id,organization_id,uploaded_by,r2_key,file_name,mime_type,size_bytes) VALUES (?,?,?,?,?,?,?,?,?,?)').bind(attachmentId,ctx.workspace.id,text(form.get('activity_id')),text(form.get('contact_id')),text(form.get('organization_id')),ctx.user.id,key,file.name,file.type,file.size).run();return{id:attachmentId,file_name:file.name,mime_type:file.type,size_bytes:file.size};}
-async function downloadAttachment(env,ctx,attachmentId){const row=await env.DB.prepare('SELECT * FROM attachments WHERE id=? AND workspace_id=?').bind(attachmentId,ctx.workspace.id).first();if(!row)throw Object.assign(new Error('Attachment not found'),{status:404});const object=await env.ATTACHMENTS.get(row.r2_key);if(!object)throw Object.assign(new Error('Attachment file is missing'),{status:404});return new Response(object.body,{headers:{...SECURITY_HEADERS,'content-type':row.mime_type||'application/octet-stream','content-disposition':`attachment; filename="${row.file_name.replaceAll('"','')}"`}});}
+async function downloadAttachment(env,ctx,attachmentId){const row=await env.DB.prepare('SELECT * FROM attachments WHERE id=? AND workspace_id=?').bind(attachmentId,ctx.workspace.id).first();if(!row)throw Object.assign(new Error('Attachment not found'),{status:404});const object=await env.ATTACHMENTS.get(row.r2_key);if(!object)throw Object.assign(new Error('Attachment file is missing'),{status:404});const safeName=String(row.file_name||'attachment').replace(/[\r\n"\\]/g,'_');return new Response(object.body,{headers:{...SECURITY_HEADERS,'cache-control':'private, no-store','content-type':row.mime_type||'application/octet-stream','content-disposition':`attachment; filename="${safeName}"`}});}
 
 async function recalculateContact(env,workspaceId,contactId){const row=await env.DB.prepare(`SELECT c.id,c.last_contact_at,c.next_follow_up_at,
 (SELECT COUNT(*) FROM activities a WHERE a.contact_id=c.id) activity_count,
@@ -442,7 +486,7 @@ async function recalculateContact(env,workspaceId,contactId){const row=await env
 (SELECT COUNT(*) FROM follow_ups f WHERE f.contact_id=c.id AND f.status IN ('open','snoozed') AND COALESCE(f.snoozed_until,f.due_at)<datetime('now')) overdue_follow_ups
 FROM contacts c WHERE c.id=? AND c.workspace_id=?`).bind(contactId,workspaceId).first();if(!row)return;const {relationshipHealth}=await import('./lib/domain.js');const score=relationshipHealth({lastContactAt:row.last_contact_at,nextFollowUpAt:row.next_follow_up_at,activityCount:row.activity_count,openDealValue:row.open_deal_value,completedTasks:row.completed_tasks,overdueTasks:row.overdue_tasks,overdueFollowUps:row.overdue_follow_ups});await env.DB.prepare('UPDATE contacts SET relationship_score=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND workspace_id=?').bind(score,contactId,workspaceId).run();}
 
-async function handleApi(request,env){const user=await currentUser(request,env);const wc=await workspaceContext(request,env,user);const ctx={user,...wc};const url=new URL(request.url);const p=parts(url.pathname);const method=request.method;
+async function handleApi(request,env){requireSameOriginWrite(request);const user=await currentUser(request,env);const wc=await workspaceContext(request,env,user);const ctx={user,...wc};const url=new URL(request.url);const p=parts(url.pathname);const method=request.method;
   if(p[1]==='me'&&method==='GET')return json(await me(env,ctx));
   if(p[1]==='dashboard'&&method==='GET')return json(await dashboard(env,ctx));
   if(p[1]==='agenda'&&method==='GET')return json(await agenda(env,ctx,request));
@@ -459,6 +503,15 @@ async function handleApi(request,env){const user=await currentUser(request,env);
   if(p[1]==='organizations'&&!p[2]&&method==='GET')return json(await listOrganizations(env,ctx,request));
   if(p[1]==='organizations'&&!p[2]&&method==='POST')return json(await createOrganization(env,ctx,request),201);
   if(p[1]==='organizations'&&p[2]&&method==='GET')return json(await getOrganization(env,ctx,p[2]));
+  if(p[1]==='organizations'&&p[2]&&method==='PATCH')return json(await updateOrganization(env,ctx,request,p[2]));
+  if(p[1]==='prospecting'&&p[2]==='overview'&&method==='GET')return json(await getProspectingOverview(env,ctx));
+  if(p[1]==='prospecting'&&p[2]==='campaigns'&&method==='GET')return json(await listProspectingCampaigns(env,ctx));
+  if(p[1]==='prospecting'&&p[2]==='members'&&!p[3]&&method==='GET')return json(await listProspects(env,ctx,request));
+  if(p[1]==='prospecting'&&p[2]==='members'&&p[3]&&method==='PATCH'){
+    requireRole(ctx.user,ctx.workspace,['admin','manager','member']);
+    const data=await bodyJson(request);const result=await updateProspectStatus(env,ctx,p[3],text(data.outreach_status,''));
+    await audit(env,ctx,request,'update','prospect_campaign_member',p[3],result.before,result.record);return json(result.record);
+  }
   if(p[1]==='activities'&&!p[2]&&method==='GET')return json(await listActivities(env,ctx,request));
   if(p[1]==='activities'&&!p[2]&&method==='POST')return json(await createActivity(env,ctx,request),201);
   if(p[1]==='deals'&&!p[2]&&method==='GET')return json(await listDeals(env,ctx,request));

@@ -49,16 +49,11 @@ CREATE INDEX IF NOT EXISTS idx_email_messages_contact_time ON email_messages(con
 CREATE INDEX IF NOT EXISTS idx_email_messages_status ON email_messages(workspace_id, status, created_at DESC);
 
 INSERT OR IGNORE INTO email_sender_identities (id, workspace_id, email_address, display_name, reply_to, domain, is_default)
-SELECT lower(hex(randomblob(16))), id, 'info@partnermarketglobal.com', 'PartnerMarket Global', 'info@partnermarketglobal.com', 'partnermarketglobal.com',
-  CASE WHEN slug NOT LIKE '%golden%' AND slug NOT LIKE '%sales%' THEN 1 ELSE 0 END
-FROM workspaces;
-
-INSERT OR IGNORE INTO email_sender_identities (id, workspace_id, email_address, display_name, reply_to, domain, is_default)
 SELECT lower(hex(randomblob(16))), id, 'info@goldendragoncapital.co', 'Golden Dragon Capital', 'info@goldendragoncapital.co', 'goldendragoncapital.co',
   CASE WHEN slug LIKE '%golden%' THEN 1 ELSE 0 END
 FROM workspaces;
 
 INSERT OR IGNORE INTO email_sender_identities (id, workspace_id, email_address, display_name, reply_to, domain, is_default)
 SELECT lower(hex(randomblob(16))), id, 'info@devriessalesconsultancy.com', 'De Vries Sales Consultancy', 'info@devriessalesconsultancy.com', 'devriessalesconsultancy.com',
-  CASE WHEN slug LIKE '%sales%' OR slug LIKE '%consult%' THEN 1 ELSE 0 END
+  CASE WHEN slug NOT LIKE '%golden%' THEN 1 ELSE 0 END
 FROM workspaces;

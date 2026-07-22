@@ -10,7 +10,7 @@ test('email schema links every message to a CRM account', async () => {
   assert.match(migration, /CREATE TABLE IF NOT EXISTS email_messages/);
   assert.match(migration, /organization_id TEXT NOT NULL REFERENCES organizations\(id\)/);
   assert.match(migration, /activity_id TEXT REFERENCES activities\(id\)/);
-  for (const domain of ['goldendragoncapital.co', 'devriessalesconsultancy.com', 'partnermarketglobal.com']) {
+  for (const domain of ['goldendragoncapital.co', 'devriessalesconsultancy.com']) {
     assert.match(migration, new RegExp(domain.replaceAll('.', '\\.')));
   }
 });
@@ -19,7 +19,7 @@ test('CRM Worker calls the private Email Worker through a service binding', asyn
   const mainConfig = JSON.parse(await read('wrangler.jsonc'));
   const emailConfig = JSON.parse(await read('wrangler.email.jsonc'));
   assert.deepEqual(mainConfig.services, [{ binding: 'EMAIL_SERVICE', service: 'partnermarket-global-email-worker' }]);
-  assert.deepEqual(emailConfig.send_email, [{ name: 'EMAIL' }]);
+  assert.deepEqual(emailConfig.send_email, [{ name: 'EMAIL', allowed_sender_addresses: ['info@goldendragoncapital.co', 'info@devriessalesconsultancy.com'] }]);
   assert.equal(emailConfig.workers_dev, false);
   assert.equal(emailConfig.main, 'src/email-worker.js');
 });
@@ -59,7 +59,7 @@ test('composer is included in the application and deployment publishes email fir
   assert.match(composer, /Send and log email/);
   assert.match(composer, /data-compose-email/);
   const emailDeploy = deployment.indexOf('npm run deploy:email');
-  const crmDeploy = deployment.indexOf('npm run deploy\n');
+  const crmDeploy = deployment.search(/run:\s+npm run deploy\s*(?:\r?\n|$)/);
   assert.ok(emailDeploy >= 0, 'Email Worker deployment step is missing');
   assert.ok(crmDeploy > emailDeploy, 'CRM Worker must deploy after the Email Worker');
 });

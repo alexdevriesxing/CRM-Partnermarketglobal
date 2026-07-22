@@ -80,7 +80,8 @@ test('production deployment is gated by resource and domain readiness', async ()
   assert.match(preflight, /REPLACE_WITH_/);
   assert.match(preflight, /goldendragoncapital\.co/);
   assert.match(preflight, /devriessalesconsultancy\.com/);
-  assert.match(preflight, /partnermarketglobal\.com/);
+  assert.match(preflight, /OWNER_EMAIL/);
+  assert.match(preflight, /allowed_sender_addresses/);
   assert.match(deployment, /npm ci/);
   assert.match(deployment, /npm run preflight:production/);
   assert.ok(deployment.indexOf('npm run preflight:production') < deployment.indexOf('npm run db:migrate:remote'));

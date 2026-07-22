@@ -6,10 +6,16 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "vars": {
-    "EMAIL_ALLOWED_DOMAINS": "goldendragoncapital.co,devriessalesconsultancy.com,partnermarketglobal.com"
+    "EMAIL_ALLOWED_DOMAINS": "goldendragoncapital.co,devriessalesconsultancy.com"
   },
   "send_email": [
-    { "name": "EMAIL" }
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": [
+        "info@goldendragoncapital.co",
+        "info@devriessalesconsultancy.com"
+      ]
+    }
   ],
   "observability": { "enabled": true, "head_sampling_rate": 1 }
 }
