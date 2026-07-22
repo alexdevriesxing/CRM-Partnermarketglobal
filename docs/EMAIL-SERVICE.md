@@ -9,9 +9,8 @@ PartnerMarket Global CRM uses two Cloudflare Workers:
 
 - `goldendragoncapital.co`
 - `devriessalesconsultancy.com`
-- `partnermarketglobal.com`
 
-The application enforces this domain list in both Workers. Sender identities are stored per workspace in D1 and may use any local part on an approved, onboarded domain.
+The application enforces this domain list in both Workers. The Cloudflare send binding is further restricted to `info@goldendragoncapital.co` and `info@devriessalesconsultancy.com`.
 
 ## Cloudflare onboarding
 
@@ -63,7 +62,6 @@ Failed sends remain in `email_messages` with their provider error code and reaso
 
 Migration `0004_email_composer.sql` adds these default identities to each workspace:
 
-- `info@partnermarketglobal.com`
 - `info@goldendragoncapital.co`
 - `info@devriessalesconsultancy.com`
 

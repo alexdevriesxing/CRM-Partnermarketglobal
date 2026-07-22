@@ -1,7 +1,6 @@
 export const DEFAULT_SENDER_DOMAINS = Object.freeze([
   'goldendragoncapital.co',
   'devriessalesconsultancy.com',
-  'partnermarketglobal.com',
 ]);
 
 export const MAX_EMAIL_RECIPIENTS = 50;

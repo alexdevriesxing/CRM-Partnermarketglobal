@@ -165,7 +165,7 @@ async function openEmailComposer(defaults = {}) {
       </div></details>
       <div class="form-actions"><button type="button" class="button secondary" data-email-discard>Discard draft</button><button type="button" class="button secondary" data-email-close>Close</button><button type="submit" class="button primary" ${sender ? '' : 'disabled'}>Send and log email</button></div>
     </form></main>
-    <aside class="email-composer-side"><h3>Sender identities</h3><p class="email-domain-note">Approved domains: <strong>@goldendragoncapital.co</strong>, <strong>@devriessalesconsultancy.com</strong>, and <strong>@partnermarketglobal.com</strong>. Each domain must show Ready in Cloudflare Email Sending.</p>
+    <aside class="email-composer-side"><h3>Sender identities</h3><p class="email-domain-note">Approved domains: <strong>@goldendragoncapital.co</strong> and <strong>@devriessalesconsultancy.com</strong>. Each domain must show Ready in Cloudflare Email Sending.</p>
       <div class="email-sender-list" data-email-sender-list>${renderSenderCards()}</div>
       ${emailUi.permissions.can_manage ? '<button class="small-button" type="button" data-email-add-sender>＋ Add sender identity</button>' : ''}
       <form class="email-sender-form" data-email-sender-form hidden><input type="hidden" name="sender_id">

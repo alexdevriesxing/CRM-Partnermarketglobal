@@ -1,6 +1,6 @@
 # PartnerMarket Global CRM V2
 
-A comprehensive, Cloudflare-native, multi-workspace CRM for managing commercial relationships, accounts, contacts, follow-ups, contact history, tasks, opportunities and analytics.
+A Cloudflare-native personal CRM for managing commercial relationships, prospect campaigns, accounts, contacts, follow-ups, contact history, tasks, opportunities, email and analytics.
 
 ## What V2 adds
 
@@ -15,6 +15,8 @@ A comprehensive, Cloudflare-native, multi-workspace CRM for managing commercial 
 - **Unified completion workflow**: complete a follow-up and write the contact log in one action
 - **Saved-view data model**, workspace goals and improved auditability
 - **Polished responsive UI** with light/dark modes, command search and desktop/mobile layouts
+- **Spreadsheet-backed prospecting** with 14 opportunity lists, campaign context, research status and account-linked email composition
+- **Owner-only production access** backed by Cloudflare Access plus an application-level email allowlist
 
 ## Cloudflare stack
 
@@ -92,18 +94,20 @@ The test suite covers:
 - mock API database switching
 - contact-log creation from follow-up completion
 - task creation and completion
+- spreadsheet campaign schema and owner-only production guards
+- private Email Worker integration, idempotency and attachment limits
 
 ## Production upgrade
 
 Existing installations apply `migrations/0003_multi_workspace_daily_work.sql`. The migration creates a default PartnerMarket Global workspace and assigns all existing records and users to it, preserving the current CRM data.
 
-Before deployment, replace placeholder binding IDs and Access settings in `wrangler.jsonc`, apply D1 migrations and trigger the manual Cloudflare deployment workflow.
+Before deployment, configure the Cloudflare Access team domain and application AUD in `wrangler.jsonc`, apply D1 migrations and trigger the manual Cloudflare deployment workflow.
 
 See [docs/V2-ARCHITECTURE.md](docs/V2-ARCHITECTURE.md) and [docs/V2-DEPLOYMENT.md](docs/V2-DEPLOYMENT.md).
 
 ## Integrated business email
 
-CRM users can compose email from approved identities on **goldendragoncapital.co**, **devriessalesconsultancy.com**, and **partnermarketglobal.com**. A private Cloudflare Email Worker performs delivery while the CRM Worker resolves the account/contact, applies consent rules, records provider status, and writes successful sends into the chronological contact log.
+The owner can compose email from the restricted identities `info@goldendragoncapital.co` and `info@devriessalesconsultancy.com`. A private Cloudflare Email Worker performs delivery while the CRM Worker resolves the account/contact, applies consent rules, records provider status, and writes successful sends into the chronological contact log.
 
 Deploy the private worker before the CRM worker:
 

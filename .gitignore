@@ -1,5 +1,9 @@
 node_modules/
+.private-crm-seed/
+*.prospect-seed.sql
 .wrangler/
+.wrangler-verification/
+.playwright-cli/
 .dev.vars
 .env
 .env.*

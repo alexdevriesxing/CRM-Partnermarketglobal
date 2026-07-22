@@ -4,7 +4,6 @@ This document is the production runbook for outbound CRM email from:
 
 - `@goldendragoncapital.co`
 - `@devriessalesconsultancy.com`
-- `@partnermarketglobal.com`
 
 ## Architecture
 
@@ -38,10 +37,10 @@ The deployment workflow runs `npm run preflight:production`. It refuses to conti
 - Wrangler still contains placeholder resource IDs.
 - The CRM service binding does not target the private Email Worker.
 - The Email Worker lacks the `EMAIL` binding or exposes a public `workers.dev` route.
-- One of the three approved domains is missing.
+- One of the two approved domains or exact sender addresses is missing.
 - GitHub environment variable `EMAIL_DOMAINS_ONBOARDED` is not exactly `true`.
 
-Only set `EMAIL_DOMAINS_ONBOARDED=true` after all three domains show Ready in Cloudflare.
+Only set `EMAIL_DOMAINS_ONBOARDED=true` after both domains show Ready in Cloudflare and their authentication records resolve publicly.
 
 ## Send guarantees
 

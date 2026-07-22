@@ -26,7 +26,12 @@ function json(data, status = 200, requestId = '') {
 async function bodyJson(request) {
   const contentType = request.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) throw Object.assign(new Error('Expected application/json'), { status: 415, code: 'E_CONTENT_TYPE' });
-  return request.json();
+  const maximumBytes = 6 * 1024 * 1024;
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > maximumBytes) throw Object.assign(new Error('Email request body is too large'), { status: 413, code: 'E_CONTENT_TOO_LARGE' });
+  const raw = await request.text();
+  if (new TextEncoder().encode(raw).byteLength > maximumBytes) throw Object.assign(new Error('Email request body is too large'), { status: 413, code: 'E_CONTENT_TOO_LARGE' });
+  try { return JSON.parse(raw); } catch { throw Object.assign(new Error('Invalid JSON request body'), { status: 400, code: 'E_INVALID_JSON' }); }
 }
 
 function namedAddress(email, name) {
@@ -70,7 +75,7 @@ export default {
     try {
       const url = new URL(request.url);
       if (request.method === 'GET' && url.pathname === '/health') {
-        return json({ ok: true, service: 'partnermarket-global-email-worker', timestamp: new Date().toISOString() }, 200, incomingRequestId);
+        return json({ ok: true, service: 'partnermarket-global-email-worker', binding: env.EMAIL ? 'configured' : 'missing', timestamp: new Date().toISOString() }, 200, incomingRequestId);
       }
       if (request.method !== 'POST' || url.pathname !== '/send') return json({ error: 'Not found' }, 404, incomingRequestId);
       if (!env.EMAIL) return json({ error: 'Cloudflare Email Service binding is not configured', code: 'E_EMAIL_BINDING_MISSING' }, 503, incomingRequestId);
